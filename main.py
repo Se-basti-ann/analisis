@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://main.d32bb122o9jw4d.amplifyapp.com"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
