@@ -27,7 +27,8 @@ def procesar_archivo_modernizacion(file: UploadFile):
             'nodos': set(),
             'codigos_n1': defaultdict(lambda: defaultdict(set)),
             'codigos_n2': defaultdict(lambda: defaultdict(set)),
-            'materiales': defaultdict(lambda: defaultdict(int)),            
+            'materiales': defaultdict(lambda: defaultdict(int)),    
+            'materiales_retirados': defaultdict(lambda: defaultdict(int))        
         })                 
         # Configurar columnas         
         COL_INICIO = "BH"
@@ -48,6 +49,29 @@ def procesar_archivo_modernizacion(file: UploadFile):
             if not required_columns.issubset(df.columns):
                 continue          
             
+            # PROCESAR MATERIALES RETIRADOS
+            pattern_codigo = re.compile(r'^\d+\.CODIGO DE (LUMINARIA|BOMBILLA|FOTOCELDA) RETIRADA (N\d+)\.?$', re.IGNORECASE)
+            pattern_potencia = re.compile(r'^\d+\.POTENCIA DE (LUMINARIA|BOMBILLA) RETIRADA (N\d+)\.\(W\)$', re.IGNORECASE)
+            
+            codigo_columns = {}
+            potencia_columns = {}
+            
+            for col in df.columns:
+                col_str = str(col).strip()
+                # PORECESAR CODIGOS RETIRADA
+                codigo_match = pattern_codigo.match(col_str)
+                if codigo_match:
+                    tipo = codigo_match.group(1).upper()
+                    n = codigo_match.group(2).upper()
+                    codigo_columns[(tipo, n)] = col_str
+                else:
+                    # PROCESAR COLUMNAS POTENCIA
+                    potencia_match = pattern_potencia.match(col_str)
+                    if potencia_match:
+                        tipo = potencia_match.group(1).upper()
+                        n = potencia_match.group(2).upper()
+                        potencia_columns[(tipo, n)] = col_str
+            
             # ========== PROCESAR MATERIALES ORIGINALES (MATERIAL X - CANTIDAD X) ==========
             material_cols = [col for col in df.columns if re.match(r'^(MATERIAL|Material)\s\d+$', col)]
             cantidad_cols = [col for col in df.columns if re.match(r'^(CANTIDAD MATERIAL|CANTIDAD DE MATERIAL)\s\d+$', col)]
@@ -63,13 +87,19 @@ def procesar_archivo_modernizacion(file: UploadFile):
                 
                 codigo_n1 = fila["2.CODIGO DE LUMINARIA INSTALADA N1."]
                 potencia_n1 = fila["3.POTENCIA DE LUMINARIA INSTALADA (W)"]
-
+                
                 for col in columnas_bh_bo:
                     cantidad = fila[col]
+                    
                     if pd.notna(cantidad) and float(cantidad) > 0:
                         nombre_material = str(col).split('.', 1)[-1].strip().upper()
-                        key = f"MATERIAL|{nombre_material}"
-                        datos[ot]['materiales'][key][nodo] += cantidad
+                        key = f"MATERIAL_RETIRADO|{nombre_material}"
+                        datos[ot]['materiales_retirados'][key][nodo] += cantidad
+                    
+                    #if pd.notna(cantidad) and float(cantidad) > 0:
+                    #    nombre_material = str(col).split('.', 1)[-1].strip().upper()
+                    #    key = f"MATERIAL|{nombre_material}"
+                    #    datos[ot]['materiales'][key][nodo] += cantidad
                         
                 if pd.notna(codigo_n1) and pd.notna(potencia_n1):
                     key = f"CODIGO 1 LUMINARIA INSTALADA {potencia_n1} W"
@@ -81,7 +111,27 @@ def procesar_archivo_modernizacion(file: UploadFile):
                 if pd.notna(codigo_n2) and pd.notna(potencia_n2):
                     key = f"CODIGO 2 LUMINARIA INSTALADA {potencia_n2} W"
                     datos[ot]['codigos_n2'][key][nodo].add(str(codigo_n2).strip().upper())
-                # Procesar materiales
+                    
+                # PROCESAR MATERIALES RETIRADOS
+                for (tipo, n), col_codigo in codigo_columns.items():
+                    codigo_val = fila.get(col_codigo)
+                    if pd.notna(codigo_val) and str(codigo_val).strip() != '':
+                        potencia_val = None
+                        if tipo in ['LUMINARIA', 'BOMBILLA']:
+                            col_potencia = potencia_columns.get((tipo, n), None)
+                            if col_potencia:
+                                potencia_val = fila.get(col_potencia)
+                                
+                            # Construir nombre del material
+                            if tipo == 'FOTOCELDA':
+                                entry_name = f"FOTOCELDA RETIRADA {n}"
+                            else:
+                                potencia_str = f"{potencia_val}W" if pd.notna(potencia_val) else ''
+                                entry_name = f"{tipo} RETIRADA {n} {potencia_str}".strip()
+                            
+                            key = f"MATERIAL_RETIRADO|{entry_name}"
+                            datos[ot]['materiales_retirados'][key][nodo] += 1
+                # Procesar materiales INSTALADOS
                 for mat_col, cant_col in zip(material_cols, cantidad_cols):
                     material = fila[mat_col]
                     cantidad = fila[cant_col]
@@ -187,7 +237,7 @@ def generar_excel(datos):
                 filas = []
                 
                 # Fila OT
-                filas.append([ot, 'UND', ''] + [''] * len(nodos_ordenados))
+                filas.append([ot, '', ''] + [''] * len(nodos_ordenados))
                 # Fila Nodos
                 filas.append(['Nodos postes', '', ''] + nodos_ordenados)
                 
@@ -210,11 +260,14 @@ def generar_excel(datos):
                             codigos = ', '.join(nodos_data.get(nodo, set()))
                             fila.append(codigos if codigos else '')
                         filas.append(fila)
+                        
+                filas.append(['MATERIALES INSTALADOS', '', ''] + [''] * len(nodos_ordenados)) #"", ""] + [''] * len(nodos_ordenados))
                 
-                # Procesar Materiales (corregir formato de celdas)
-                for material_key, cantidades in info['materiales'].items():
+                # Procesar Materiales Instalados (orden alfabético)
+                for material_key in sorted(info['materiales'].keys(), key=lambda x: x.split('|', 1)[1].lower()):
                     try:
                         _, nombre = material_key.split('|', 1)
+                        cantidades = info['materiales'][material_key]
                         total = sum(cantidades.values())
                         fila = [
                             nombre,
@@ -226,11 +279,49 @@ def generar_excel(datos):
                     except Exception as e:
                         logger.error(f"Error procesando material: {str(e)}")
                         continue
+
+                # Agregar encabezado de Materiales Retirados
+                filas.append(['MATERIALES RETIRADOS', '', ''] + [''] * len(nodos_ordenados))
+
+                # Procesar Materiales Retirados (orden alfabético)
+                for material_key in sorted(info.get('materiales_retirados', {}).keys(), key=lambda x: x.split('|', 1)[1].lower()):
+                    try:
+                        _, nombre = material_key.split('|', 1)
+                        cantidades = info['materiales_retirados'][material_key]
+                        total = sum(cantidades.values())
+                        fila = [
+                            nombre,
+                            'UND',
+                            total,
+                            *[int(cant) if isinstance(cant, (int, float)) else 0 for cant in (cantidades.get(nodo, 0) for nodo in nodos_ordenados)]
+                        ]
+                        filas.append(fila)
+                    except Exception as e:
+                        logger.error(f"Error procesando material retirado: {str(e)}")
+                        continue
+                
                 
                 # Crear DataFrame
                 df = pd.DataFrame(filas, columns=columnas)
                 df.to_excel(writer, sheet_name=f"OT_{ot}", index=False)
-                sheets_created = True
+                sheets_created = True                                
+                # Cargar el archivo con openpyxl para combinar celdas
+                ws = writer.sheets[f"OT_{ot}"]
+
+                # Combinar celdas para "MATERIALES INSTALADOS" y "MATERIALES RETIRADOS"
+                for row in ws.iter_rows(min_row=2, max_row=ws.max_row):  # Comienza desde la segunda fila
+                    if row[0].value in ["MATERIALES INSTALADOS", "MATERIALES RETIRADOS"]:
+                        start_col = 1
+                        end_col = len(columnas)
+                        row_idx = row[0].row
+                        ws.merge_cells(
+                            start_row=row_idx,
+                            start_column=start_col,
+                            end_row=row_idx,
+                            end_column=end_col
+                        )
+                    # Opcional: Centrar el texto
+                    row[0].alignment = row[0].alignment.copy(horizontal='center', vertical='center')                
 
             # Eliminar hoja temporal si se crearon hojas
             if sheets_created:
@@ -262,7 +353,8 @@ async def subir_archivos(
             'nodos': set(),
             'codigos_n1': defaultdict(lambda: defaultdict(set)),
             'codigos_n2': defaultdict(lambda: defaultdict(set)),
-            'materiales': defaultdict(lambda: defaultdict(int))
+            'materiales': defaultdict(lambda: defaultdict(int)),
+            'materiales_retirados': defaultdict(lambda: defaultdict(int))
         })
 
         for file in files:
@@ -279,10 +371,10 @@ async def subir_archivos(
                     # Combinar nodos
                     datos_combinados[ot]['nodos'].update(info['nodos'])
                     
-                    # Combinar materiales (ambos tipos)
-                    for material_key, cantidades in info['materiales'].items():
+                    # Materiales instalados
+                    for mat_key, cantidades in info.get('materiales', {}).items():
                         for nodo, cantidad in cantidades.items():
-                            datos_combinados[ot]['materiales'][material_key][nodo] += cantidad
+                            datos_combinados[ot]['materiales'][mat_key][nodo] += cantidad                                        
                     
                     # Combinar códigos solo para modernización
                     if tipo_archivo == 'modernizacion':
@@ -295,6 +387,11 @@ async def subir_archivos(
                         for key, nodos_data in info.get('codigos_n2', {}).items():
                             for nodo, codigos in nodos_data.items():
                                 datos_combinados[ot]['codigos_n2'][key][str(nodo).upper()].update(codigos)
+                    
+                        # Materiales retirados
+                        for mat_key, cantidades in info.get('materiales_retirados', {}).items():
+                            for nodo, cantidad in cantidades.items():
+                                datos_combinados[ot]['materiales_retirados'][mat_key][nodo] += cantidad
 
             except Exception as e:
                 logger.error(f"Error con {file.filename}: {str(e)}")
