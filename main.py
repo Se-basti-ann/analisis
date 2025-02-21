@@ -1,3 +1,5 @@
+from email import header
+import os
 from openpyxl.utils import column_index_from_string
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +19,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def cargar_plantilla_mano_obra():
+    try:
+        # Cargar desde archivo en el mismo directorio
+        plantilla_path = "plantilla_mano_obra.xlsx"
+        
+        if not os.path.exists(plantilla_path):
+            raise FileNotFoundError("Archivo de plantilla no encontrado")
+            
+        df = pd.read_excel(plantilla_path)
+        
+        # Validar estructura
+        required_columns = [
+            'DESCRIPCION MANO DE OBRA',
+            'UNIDAD', 
+            'CANTIDAD',
+            'VALOR UNITARIO',
+            'VALOR TOTAL'
+        ]
+        
+        if not all(col in df.columns for col in required_columns):
+            raise ValueError("Plantilla no tiene las columnas requeridas")
+            
+        return df.to_dict('records')
+        
+    except Exception as e:
+        logger.error(f"Error cargando plantilla: {str(e)}")
+        return []
+           
 
 def procesar_archivo_modernizacion(file: UploadFile):
     try:
@@ -226,7 +256,8 @@ def generar_excel(datos):
         writer.book.create_sheet(temp_sheet_name)
         sheets_created = False
         
-        if datos:
+        if datos:                        
+            
             for ot, info in datos.items():
                 try:
                     nodos_ordenados = sorted(info['nodos'], key=lambda x: int(x) if x.isdigit() else x)
@@ -300,11 +331,18 @@ def generar_excel(datos):
                         logger.error(f"Error procesando material retirado: {str(e)}")
                         continue
                 
-                
-                # Crear DataFrame
+                # Crear DataFrame a partir de los datos recopilados
                 df = pd.DataFrame(filas, columns=columnas)
                 df.to_excel(writer, sheet_name=f"OT_{ot}", index=False)
-                sheets_created = True                                
+
+                # Acceder a la hoja creada
+                sheet = writer.sheets[f"OT_{ot}"]
+
+                # Obtener la plantilla para la mano de obra
+                plantilla = cargar_plantilla_mano_obra()
+
+                # Agregar la tabla de mano de obra en la hoja
+                agregar_tabla_mano_obra(sheet, df, plantilla)                                
                 # Cargar el archivo con openpyxl para combinar celdas
                 ws = writer.sheets[f"OT_{ot}"]
 
@@ -342,6 +380,46 @@ def generar_excel(datos):
 
     output.seek(0)
     return output
+
+
+def agregar_tabla_mano_obra(worksheet, df, plantilla):
+    from openpyxl.styles import Font, Border, Side, Alignment
+    
+    # Configurar estilos
+    header_font = Font(bold=True)
+    cell_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # Determinar posición inicial
+    start_row = len(df) + 4  # Usar len(df) en lugar de df.shape[0]
+    
+    # Escribir encabezados
+    headers = ['DESCRIPCION MANO DE OBRA', 'UNIDAD', 'CANTIDAD', 'VALOR UNITARIO', 'VALOR TOTAL']
+    for col_num, header in enumerate(headers, 1):
+        cell = worksheet.cell(row=start_row, column=col_num)
+        cell.value = header
+        cell.font = header_font
+        cell.border = cell_border
+    
+    # Escribir datos
+    for idx, item in enumerate(plantilla, 1):
+        row_num = start_row + idx
+        worksheet.cell(row=row_num, column=1, value=item['DESCRIPCION MANO DE OBRA']).border = cell_border
+        worksheet.cell(row=row_num, column=2, value=item['UNIDAD']).border = cell_border
+        worksheet.cell(row=row_num, column=3, value=item['CANTIDAD']).border = cell_border
+        worksheet.cell(row=row_num, column=4, value=item['VALOR UNITARIO']).number_format = '"$ "#,##0.00'
+        worksheet.cell(row=row_num, column=5, value=f'=C{row_num}*D{row_num}').number_format = '"$ "#,##0.00'
+    
+    # Ajustar anchos de columna
+    worksheet.column_dimensions['A'].width = 45
+    worksheet.column_dimensions['B'].width = 10
+    worksheet.column_dimensions['C'].width = 12
+    worksheet.column_dimensions['D'].width = 15
+    worksheet.column_dimensions['E'].width = 15
 
 @app.post("/upload/")
 async def subir_archivos(
