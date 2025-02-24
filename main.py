@@ -58,6 +58,8 @@ def procesar_archivo_modernizacion(file: UploadFile):
             'materiales': defaultdict(lambda: defaultdict(int)),    
             'materiales_retirados': defaultdict(lambda: defaultdict(int))        
         })                 
+        
+        counter_0 = defaultdict(int)
         # Configurar columnas         
         COL_INICIO = "BH"
         COL_FIN = "BO"
@@ -110,8 +112,16 @@ def procesar_archivo_modernizacion(file: UploadFile):
                 columnas_bh_bo = df.columns[idx_inicio : idx_fin + 1]
                         
             for _, fila in df.iterrows():
-                ot = fila["2.Nro de O.T."]
-                nodo = str(fila["1.NODO DEL POSTE."])
+                ot = fila["2.Nro de O.T."]                
+                #nodo = str(fila["1.NODO DEL POSTE."])            
+                original_nodo = str(fila["1.NODO DEL POSTE."]).strip()  # Limpiar y convertir a string
+    
+                # Si el nodo es 0, asignar un identificador único por OT
+                if original_nodo in ['0', '0.0']:
+                    counter_0[ot] += 1
+                    nodo = f"0_{counter_0[ot]}"  # Ejemplo: 0_1, 0_2, etc.
+                else:
+                    nodo = original_nodo                        
                 datos[ot]['nodos'].add(nodo)                                
                 
                 codigo_n1 = fila["2.CODIGO DE LUMINARIA INSTALADA N1."]
@@ -122,7 +132,11 @@ def procesar_archivo_modernizacion(file: UploadFile):
                 
                 for col in columnas_bh_bo:
                     cantidad = fila[col]
-                    
+                    # Limpiar NaN y convertir a 0
+                    if pd.isna(cantidad):
+                        cantidad = 0
+                    else:
+                        cantidad = int(cantidad)  # Asegurar entero
                     #if pd.notna(cantidad) and float(cantidad) > 0:
                     if (
                         pd.notna(codigo_n1) 
@@ -302,10 +316,12 @@ def generar_excel(datos):
             
             for ot, info in datos.items():
                 try:
-                    nodos_ordenados = sorted(info['nodos'], key=lambda x: int(x) if x.isdigit() else x)
+                    #nodos_ordenados = sorted(info['nodos'], key=lambda x: int(x) if x.isdigit() else x)
+                    nodos_ordenados = sorted(info['nodos'], key=lambda x: str(x))
                 except ValueError:
                     nodos_ordenados = sorted(info['nodos'])
                 
+                #columnas = ['OT', 'Unidad', 'Cantidad Total'] + [f"Nodo_{i+1} ({nodo})" for i, nodo in enumerate(nodos_ordenados)]
                 columnas = ['OT', 'Unidad', 'Cantidad Total'] + [f"Nodo_{i+1} ({nodo})" for i, nodo in enumerate(nodos_ordenados)]
 
                 filas = []
