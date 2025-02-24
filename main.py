@@ -34,8 +34,6 @@ def cargar_plantilla_mano_obra():
             'DESCRIPCION MANO DE OBRA',
             'UNIDAD', 
             'CANTIDAD',
-            'VALOR UNITARIO',
-            'VALOR TOTAL'
         ]
         
         if not all(col in df.columns for col in required_columns):
@@ -81,7 +79,8 @@ def procesar_archivo_modernizacion(file: UploadFile):
             
             # PROCESAR MATERIALES RETIRADOS
             pattern_codigo = re.compile(r'^\d+\.CODIGO DE (LUMINARIA|BOMBILLA|FOTOCELDA) RETIRADA (N\d+)\.?$', re.IGNORECASE)
-            pattern_potencia = re.compile(r'^\d+\.POTENCIA DE (LUMINARIA|BOMBILLA) RETIRADA (N\d+)\.\(W\)$', re.IGNORECASE)
+            pattern_potencia = re.compile(r'^\d+\.POTENCIA DE (LUMINARIA|BOMBILLA) RETIRADA (N\d+)\.?\(W\)$', re.IGNORECASE)
+
             
             codigo_columns = {}
             potencia_columns = {}
@@ -109,7 +108,7 @@ def procesar_archivo_modernizacion(file: UploadFile):
             columnas_bh_bo = []
             if len(df.columns) > idx_fin:
                 columnas_bh_bo = df.columns[idx_inicio : idx_fin + 1]
-                
+                        
             for _, fila in df.iterrows():
                 ot = fila["2.Nro de O.T."]
                 nodo = str(fila["1.NODO DEL POSTE."])
@@ -118,59 +117,108 @@ def procesar_archivo_modernizacion(file: UploadFile):
                 codigo_n1 = fila["2.CODIGO DE LUMINARIA INSTALADA N1."]
                 potencia_n1 = fila["3.POTENCIA DE LUMINARIA INSTALADA (W)"]
                 
-                for col in columnas_bh_bo:
-                    cantidad = fila[col]
-                    
-                    if pd.notna(cantidad) and float(cantidad) > 0:
-                        nombre_material = str(col).split('.', 1)[-1].strip().upper()
-                        key = f"MATERIAL_RETIRADO|{nombre_material}"
-                        datos[ot]['materiales_retirados'][key][nodo] += cantidad
-                    
-                    #if pd.notna(cantidad) and float(cantidad) > 0:
-                    #    nombre_material = str(col).split('.', 1)[-1].strip().upper()
-                    #    key = f"MATERIAL|{nombre_material}"
-                    #    datos[ot]['materiales'][key][nodo] += cantidad
-                        
-                if pd.notna(codigo_n1) and pd.notna(potencia_n1):
-                    key = f"CODIGO 1 LUMINARIA INSTALADA {potencia_n1} W"
-                    datos[ot]['codigos_n1'][key][nodo].add(str(codigo_n1).strip().upper())
-                    
                 codigo_n2 = fila["6.CODIGO DE LUMINARIA INSTALADA N2."]
                 potencia_n2 = fila["7.POTENCIA DE LUMINARIA INSTALADA (W)"]
                 
-                if pd.notna(codigo_n2) and pd.notna(potencia_n2):
-                    key = f"CODIGO 2 LUMINARIA INSTALADA {potencia_n2} W"
-                    datos[ot]['codigos_n2'][key][nodo].add(str(codigo_n2).strip().upper())
+                for col in columnas_bh_bo:
+                    cantidad = fila[col]
                     
-                # PROCESAR MATERIALES RETIRADOS
+                    #if pd.notna(cantidad) and float(cantidad) > 0:
+                    if (
+                        pd.notna(codigo_n1) 
+                        and str(codigo_n1).strip() not in ['', '0', '0.0']
+                        or pd.notna(potencia_n1) != "0"
+                        and float(potencia_n1) != 0                        
+                    ):
+                        nombre_material = str(col).split('.', 1)[-1].strip().upper()
+                        key = f"MATERIAL_RETIRADO|{nombre_material}"
+                        datos[ot]['materiales_retirados'][key][nodo] += cantidad
+                                            
+                    #if pd.notna(codigo_n1) and pd.notna(potencia_n1):
+                        try:
+                            potencia_val = float(potencia_n1)
+                            if potencia_val == 0:
+                                key = "CODIGO 1 LUMINARIA INSTALADA"
+                            else:
+                                if potencia_val.is_integer():
+                                    key = f"CODIGO 1 LUMINARIA INSTALADA {int(potencia_val)} W"
+                                else:
+                                    key = f"CODIGO 1 LUMINARIA INSTALADA {potencia_val} W"
+                            datos[ot]['codigos_n1'][key][nodo].add(str(codigo_n1).strip().upper())
+                        except:
+                            pass                                    
+                
+                    if (
+                        pd.notna(codigo_n2)
+                        and str(codigo_n2).strip() not in ['', '0', '0.0']
+                        or pd.notna(potencia_n2) != "0"
+                        and float(potencia_n2) != 0   
+                        
+                        ):
+                        try:
+                            potencia_val = float(potencia_n2)
+                            if potencia_val == 0:
+                                key = "CODIGO 2 LUMINARIA INSTALADA"
+                            else:
+                                if potencia_val.is_integer():
+                                    key = f"CODIGO 2 LUMINARIA INSTALADA {int(potencia_val)} W"
+                                else:
+                                    key = f"CODIGO 2 LUMINARIA INSTALADA {potencia_val} W"
+                            datos[ot]['codigos_n2'][key][nodo].add(str(codigo_n2).strip().upper())
+                        except:
+                            pass
+                    
+                    # PROCESAR MATERIALES RETIRADOS
                 for (tipo, n), col_codigo in codigo_columns.items():
                     codigo_val = fila.get(col_codigo)
-                    if pd.notna(codigo_val) and str(codigo_val).strip() != '':
-                        potencia_val = None
-                        if tipo in ['LUMINARIA', 'BOMBILLA']:
-                            col_potencia = potencia_columns.get((tipo, n), None)
-                            if col_potencia:
-                                potencia_val = fila.get(col_potencia)
-                                
-                            # Construir nombre del material
-                            if tipo == 'FOTOCELDA':
-                                entry_name = f"FOTOCELDA RETIRADA {n}"
-                            else:
-                                potencia_str = f"{potencia_val}W" if pd.notna(potencia_val) else ''
+                    col_potencia = None
+                    potencia_val = None
+
+                    if tipo in ['LUMINARIA', 'BOMBILLA']:
+                        col_potencia = potencia_columns.get((tipo, n), None)
+                        if col_potencia:
+                            potencia_val = fila.get(col_potencia)
+                    
+                    codigo_es_valido = (
+                        pd.notna(codigo_val)
+                        and str(codigo_val).strip() not in ['', '0', '0.0']
+                    )
+                    
+                    potencia_es_valida = False
+                    if col_potencia and pd.notna(potencia_val):
+                        if col_potencia and pd.notna(potencia_val):
+                            try: 
+                                potencia_float = float(potencia_val)
+                                potencia_es_valida = potencia_float > 0
+                            except:
+                                pass
+                    
+                    if codigo_es_valido or potencia_es_valida:
+                        if tipo == 'FOTOCELDA':
+                            entry_name = f"FOTOCELDA RETIRADA {n}"
+                        else:
+                            potencia_str = ""
+                            if potencia_es_valida:
+                                potencia_str = (
+                                    f"{int(potencia_float)}W"
+                                    if potencia_float.is_integer()
+                                    else f"{potencia_float}W"
+                                )                                               
+    
+                            if potencia_str:
                                 entry_name = f"{tipo} RETIRADA {n} {potencia_str}".strip()
+                            else:
+                                entry_name = f"{tipo} RETIRADA {n}".strip()
+                        key = f"MATERIAL_RETIRADO|{entry_name}"
+                        datos[ot]['materiales_retirados'][key][nodo] += 1
                             
-                            key = f"MATERIAL_RETIRADO|{entry_name}"
-                            datos[ot]['materiales_retirados'][key][nodo] += 1
                 # Procesar materiales INSTALADOS
                 for mat_col, cant_col in zip(material_cols, cantidad_cols):
                     material = fila[mat_col]
                     cantidad = fila[cant_col]
-                    
-                    if pd.notna(material) and pd.notna(cantidad):
-                        if str(material).strip().upper() not in ['NINGUNO', 'SIN DATOS', 'NA']:
-                            if float(cantidad) > 0.0:
-                                key = f"MATERIAL|{material}".strip().upper()
-                                datos[ot]['materiales'][key][nodo] += cantidad        
+                    if pd.notna(material) and pd.notna(cantidad) and float(cantidad) > 0.0:
+                        key = f"MATERIAL|{material}".strip().upper()
+                        datos[ot]['materiales'][key][nodo] += cantidad  
                                                
         return datos
 
@@ -182,65 +230,59 @@ def procesar_archivo_mantenimiento(file: UploadFile):
     try:
         contenido = file.file.read()
         xls = pd.ExcelFile(BytesIO(contenido))
-        
         datos = defaultdict(lambda: {
             'nodos': set(),
             'materiales': defaultdict(lambda: defaultdict(int))
         })
 
+        material_pattern = re.compile(r'^MATERIAL\s\d+$', re.IGNORECASE)
+        cantidad_pattern = re.compile(r'^CANTIDAD MATERIAL\s\d+$', re.IGNORECASE)
+
         for hoja in xls.sheet_names:
             df = xls.parse(hoja).rename(columns=lambda x: str(x).strip())
-            
             required_columns = {"6.Nro.Orden Energis", "5.Nodo"}
             if not required_columns.issubset(df.columns):
-                logger.warning(f"Hoja {hoja} omitida - Columnas faltantes")
                 continue
 
-            # Identificar columnas MATERIAL y CANTIDAD exactas
-            material_cols = [col for col in df.columns if re.match(r'^MATERIAL\s\d+$', col, re.IGNORECASE)]
-            cantidad_cols = [col for col in df.columns if re.match(r'^CANTIDAD MATERIAL\s\d+$', col, re.IGNORECASE)]
-            
-            # Emparejar columnas por número
-            materiales = {}
-            for col in material_cols:
-                num = re.search(r'\d+', col).group()
-                materiales[num] = {'material': col}
-            
-            for col in cantidad_cols:
-                num = re.search(r'\d+', col).group()
-                if num in materiales:
-                    materiales[num]['cantidad'] = col
-
-            for _, fila in df.iterrows():
-                ot = fila["6.Nro.Orden Energis"]
-                nodo = str(fila["5.Nodo"])
+            df["5.Nodo"] = df["5.Nodo"].astype(str)
+            ot_nodos = df[["6.Nro.Orden Energis", "5.Nodo"]].drop_duplicates()
+            for ot, nodo in ot_nodos.itertuples(index=False, name=None):
                 datos[ot]['nodos'].add(nodo)
 
-                # Procesar cada par material-cantidad
-                for num, cols in materiales.items():
-                    if 'cantidad' not in cols:
-                        continue
-                    
-                    material = fila[cols['material']]
-                    cantidad = fila[cols['cantidad']]
-                    
-                    try:
-                        # Validar material
-                        if pd.isna(material) or str(material).strip().upper() in ['NINGUNO', 'NA', '']:
-                            continue
-                            
-                        # Convertir cantidad a número
-                        cantidad_val = float(cantidad) if not isinstance(cantidad, pd.Timestamp) else 0.0
-                        if cantidad_val <= 0:
-                            continue
-                            
-                        # Registrar material
-                        key = f"MATERIAL|{str(material).strip().upper()}"
-                        datos[ot]['materiales'][key][nodo] += cantidad_val
-                        
-                    except Exception as e:
-                        logger.error(f"Error procesando fila {_}: {str(e)}")
-                        continue
+            material_cols = [col for col in df.columns if material_pattern.match(col)]
+            cantidad_cols = [col for col in df.columns if cantidad_pattern.match(col)]
+            paired_columns = []
+            material_nums = {re.search(r'\d+', col).group() for col in material_cols}
+            for col in cantidad_cols:
+                num = re.search(r'\d+', col).group()
+                if num in material_nums:
+                    mat_col = next(c for c in material_cols if num in c)
+                    paired_columns.append((mat_col, col))
+
+            materiales_data = []
+            for mat_col, cant_col in paired_columns:
+                temp_df = df[["6.Nro.Orden Energis", "5.Nodo", mat_col, cant_col]].copy()
+                temp_df.columns = ["OT", "Nodo", "Material", "Cantidad"]
+                materiales_data.append(temp_df)
+
+            combined_df = pd.concat(materiales_data, ignore_index=True)
+            combined_df = combined_df[
+                (combined_df['Material'].notna()) &
+                (~combined_df['Material'].str.strip().str.upper().isin(['', 'NINGUNO', 'NA'])) &
+                (pd.to_numeric(combined_df['Cantidad'], errors='coerce') > 0)
+            ]
+            
+            if combined_df.empty:
+                continue
+
+            combined_df['Material'] = combined_df['Material'].str.strip().str.upper()
+            combined_df['Cantidad'] = pd.to_numeric(combined_df['Cantidad'])
+            grouped = combined_df.groupby(['OT', 'Nodo', 'Material'])['Cantidad'].sum().reset_index()
+
+            for row in grouped.itertuples(index=False):
+                ot, nodo, material, cantidad = row
+                key = f"MATERIAL|{material}"
+                datos[ot]['materiales'][key][nodo] += cantidad
 
         return datos
 
@@ -264,7 +306,8 @@ def generar_excel(datos):
                 except ValueError:
                     nodos_ordenados = sorted(info['nodos'])
                 
-                columnas = ['OT', 'Unidad', 'Cantidad Total'] + [f"Nodo_{i+1}" for i in range(len(nodos_ordenados))]
+                columnas = ['OT', 'Unidad', 'Cantidad Total'] + [f"Nodo_{i+1} ({nodo})" for i, nodo in enumerate(nodos_ordenados)]
+
                 filas = []
                 
                 # Fila OT
@@ -398,7 +441,7 @@ def agregar_tabla_mano_obra(worksheet, df, plantilla):
     start_row = len(df) + 4  # Usar len(df) en lugar de df.shape[0]
     
     # Escribir encabezados
-    headers = ['DESCRIPCION MANO DE OBRA', 'UNIDAD', 'CANTIDAD', 'VALOR UNITARIO', 'VALOR TOTAL']
+    headers = ['DESCRIPCION MANO DE OBRA', 'UNIDAD', 'CANTIDAD']
     for col_num, header in enumerate(headers, 1):
         cell = worksheet.cell(row=start_row, column=col_num)
         cell.value = header
@@ -411,15 +454,15 @@ def agregar_tabla_mano_obra(worksheet, df, plantilla):
         worksheet.cell(row=row_num, column=1, value=item['DESCRIPCION MANO DE OBRA']).border = cell_border
         worksheet.cell(row=row_num, column=2, value=item['UNIDAD']).border = cell_border
         worksheet.cell(row=row_num, column=3, value=item['CANTIDAD']).border = cell_border
-        worksheet.cell(row=row_num, column=4, value=item['VALOR UNITARIO']).number_format = '"$ "#,##0.00'
-        worksheet.cell(row=row_num, column=5, value=f'=C{row_num}*D{row_num}').number_format = '"$ "#,##0.00'
+        #worksheet.cell(row=row_num, column=4, value=item['VALOR UNITARIO']).number_format = '"$ "#,##0.00'
+        #worksheet.cell(row=row_num, column=5, value=f'=C{row_num}*D{row_num}').number_format = '"$ "#,##0.00'
     
     # Ajustar anchos de columna
     worksheet.column_dimensions['A'].width = 45
     worksheet.column_dimensions['B'].width = 10
     worksheet.column_dimensions['C'].width = 12
-    worksheet.column_dimensions['D'].width = 15
-    worksheet.column_dimensions['E'].width = 15
+    #worksheet.column_dimensions['D'].width = 15
+    #worksheet.column_dimensions['E'].width = 15
 
 @app.post("/upload/")
 async def subir_archivos(
