@@ -52,7 +52,9 @@ def procesar_archivo_modernizacion(file: UploadFile):
         xls = pd.ExcelFile(BytesIO(contenido))
         
         datos = defaultdict(lambda: {
-            'nodos': set(),
+            #'nodos': set(),
+            'nodos': [],
+            'nodo_counts': defaultdict(int),
             'codigos_n1': defaultdict(lambda: defaultdict(set)),
             'codigos_n2': defaultdict(lambda: defaultdict(set)),
             'materiales': defaultdict(lambda: defaultdict(int)),    
@@ -74,11 +76,25 @@ def procesar_archivo_modernizacion(file: UploadFile):
                 "2.Nro de O.T.", "1.NODO DEL POSTE.",
                 "2.CODIGO DE LUMINARIA INSTALADA N1.", "3.POTENCIA DE LUMINARIA INSTALADA (W)",
                 "6.CODIGO DE LUMINARIA INSTALADA N2.", "7.POTENCIA DE LUMINARIA INSTALADA (W)",
-                "1. Describa Aspectos que Considere se deben tener en cuenta."
+                "1. Describa Aspectos que Considere se deben tener en cuenta.",
+                "FechaSincronizacion"
             }
             if not required_columns.issubset(df.columns):
                 continue          
             
+            # Parsear y ordenar por FechaSincronizacion
+            df['FechaSincronizacion'] = (
+                df['FechaSincronizacion']
+                .astype(str)
+                .str.replace('a. m.', 'AM', case=False)
+                .str.replace('p. m.', 'PM', case=False)
+            )
+            df['FechaSincronizacion'] = pd.to_datetime(
+                df['FechaSincronizacion'],
+                format='%d/%m/%Y %I:%M:%S %p',
+                errors='coerce'
+            )
+            df = df.sort_values(by='FechaSincronizacion', ascending=True)
             # PROCESAR MATERIALES RETIRADOS
             pattern_codigo = re.compile(r'^\d+\.CODIGO DE (LUMINARIA|BOMBILLA|FOTOCELDA) RETIRADA (N\d+)\.?$', re.IGNORECASE)
             pattern_potencia = re.compile(r'^\d+\.POTENCIA DE (LUMINARIA|BOMBILLA) RETIRADA (N\d+)\.?\(W\)$', re.IGNORECASE)
@@ -112,8 +128,7 @@ def procesar_archivo_modernizacion(file: UploadFile):
                 columnas_bh_bo = df.columns[idx_inicio : idx_fin + 1]
                         
             for _, fila in df.iterrows():
-                ot = fila["2.Nro de O.T."]                
-                #nodo = str(fila["1.NODO DEL POSTE."])            
+                ot = fila["2.Nro de O.T."]                        
                 original_nodo = str(fila["1.NODO DEL POSTE."]).strip()  # Limpiar y convertir a string
     
                 # Si el nodo es 0, asignar un identificador único por OT
@@ -121,8 +136,11 @@ def procesar_archivo_modernizacion(file: UploadFile):
                     counter_0[ot] += 1
                     nodo = f"0_{counter_0[ot]}"  # Ejemplo: 0_1, 0_2, etc.
                 else:
-                    nodo = original_nodo                        
-                datos[ot]['nodos'].add(nodo)                                
+                    count = datos[ot]['nodo_counts'][original_nodo] + 1
+                    datos[ot]['nodo_counts'][original_nodo] = count
+                    nodo = f"{original_nodo}_{count}" if count > 1 else original_nodo                  
+                #datos[ot]['nodos'].add(nodo)             
+                datos[ot]['nodos'].append(nodo)                   
                 
                 codigo_n1 = fila["2.CODIGO DE LUMINARIA INSTALADA N1."]
                 potencia_n1 = fila["3.POTENCIA DE LUMINARIA INSTALADA (W)"]
@@ -315,17 +333,16 @@ def generar_excel(datos):
         if datos:                        
             
             for ot, info in datos.items():
-                try:
+                nodos_ordenados = sorted(info['nodos'])
+                #try:
                     #nodos_ordenados = sorted(info['nodos'], key=lambda x: int(x) if x.isdigit() else x)
-                    nodos_ordenados = sorted(info['nodos'], key=lambda x: str(x))
-                except ValueError:
-                    nodos_ordenados = sorted(info['nodos'])
+                    #nodos_ordenados = sorted(info['nodos'], key=lambda x: str(x))
+                #except ValueError:
+                    #nodos_ordenados = sorted(info['nodos'])
                 
+                columnas = ['OT', 'Unidad', 'Cantidad Total'] + [f"Nodo_{i+1}" for i, _ in enumerate(nodos_ordenados)]
                 #columnas = ['OT', 'Unidad', 'Cantidad Total'] + [f"Nodo_{i+1} ({nodo})" for i, nodo in enumerate(nodos_ordenados)]
-                columnas = ['OT', 'Unidad', 'Cantidad Total'] + [f"Nodo_{i+1} ({nodo})" for i, nodo in enumerate(nodos_ordenados)]
-
-                filas = []
-                
+                filas = []                
                 # Fila OT
                 filas.append([ot, '', ''] + [''] * len(nodos_ordenados))
                 # Fila Nodos
@@ -354,7 +371,8 @@ def generar_excel(datos):
                 filas.append(['MATERIALES INSTALADOS', '', ''] + [''] * len(nodos_ordenados)) #"", ""] + [''] * len(nodos_ordenados))
                 
                 # Procesar Materiales Instalados (orden alfabético)
-                for material_key in sorted(info['materiales'].keys(), key=lambda x: x.split('|', 1)[1].lower()):
+                #for material_key in sorted(info['materiales'].keys(), key=lambda x: x.split('|', 1)[1].lower()):
+                for material_key in info['materiales'].keys():
                     try:
                         _, nombre = material_key.split('|', 1)
                         cantidades = info['materiales'][material_key]
@@ -374,7 +392,8 @@ def generar_excel(datos):
                 filas.append(['MATERIALES RETIRADOS', '', ''] + [''] * len(nodos_ordenados))
 
                 # Procesar Materiales Retirados (orden alfabético)
-                for material_key in sorted(info.get('materiales_retirados', {}).keys(), key=lambda x: x.split('|', 1)[1].lower()):
+                #for material_key in sorted(info.get('materiales_retirados', {}).keys(), key=lambda x: x.split('|', 1)[1].lower()):
+                for material_key in info.get('materiales_retirados', {}).keys():
                     try:
                         _, nombre = material_key.split('|', 1)
                         cantidades = info['materiales_retirados'][material_key]
