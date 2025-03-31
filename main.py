@@ -1,5 +1,7 @@
+from ctypes import alignment
 from email import header
 import os
+from tkinter.font import Font
 from openpyxl.utils import column_index_from_string
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +20,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def normalizar_barrio(barrio):
+    barrio_str = str(barrio).strip()
+    try:
+        pd.to_datetime(barrio_str, dayfirts=True)
+        return 'Sin barrio'
+    except Exception:
+        pass
+    if barrio_str in ['0', '0.0']:
+        return 'Sin barrio'
+    return barrio_str.title().strip()
 
 def cargar_plantilla_mano_obra():
     try:
@@ -52,14 +65,20 @@ def procesar_archivo_modernizacion(file: UploadFile):
         xls = pd.ExcelFile(BytesIO(contenido))
         
         datos = defaultdict(lambda: {
-            #'nodos': set(),
             'nodos': [],
             'nodo_counts': defaultdict(int),
             'codigos_n1': defaultdict(lambda: defaultdict(set)),
             'codigos_n2': defaultdict(lambda: defaultdict(set)),
             'materiales': defaultdict(lambda: defaultdict(int)),    
-            'materiales_retirados': defaultdict(lambda: defaultdict(int))        
+            'materiales_retirados': defaultdict(lambda: defaultdict(int)),
+            'aspectos_materiales': defaultdict(lambda: defaultdict(lambda: set())),  # Nuevo campo
+            'aspectos_retirados': defaultdict(lambda: defaultdict(lambda: set()))     # Nuevo campo
         })                 
+        
+        datos_por_barrio = defaultdict(lambda: {
+            'materiales_instalados': defaultdict(lambda: defaultdict(int)),
+            'materiales_retirados': defaultdict(lambda: defaultdict(int))
+                                                })
         
         counter_0 = defaultdict(int)
         # Configurar columnas         
@@ -98,7 +117,6 @@ def procesar_archivo_modernizacion(file: UploadFile):
             # PROCESAR MATERIALES RETIRADOS
             pattern_codigo = re.compile(r'^\d+\.CODIGO DE (LUMINARIA|BOMBILLA|FOTOCELDA) RETIRADA (N\d+)\.?$', re.IGNORECASE)
             pattern_potencia = re.compile(r'^\d+\.POTENCIA DE (LUMINARIA|BOMBILLA) RETIRADA (N\d+)\.?\(W\)$', re.IGNORECASE)
-
             
             codigo_columns = {}
             potencia_columns = {}
@@ -128,7 +146,11 @@ def procesar_archivo_modernizacion(file: UploadFile):
                 columnas_bh_bo = df.columns[idx_inicio : idx_fin + 1]
                         
             for _, fila in df.iterrows():
-                ot = fila["2.Nro de O.T."]                        
+                ot = fila["2.Nro de O.T."]   
+                
+                barrio = fila.get("3.Barrio", "")
+                barrio_normalizado = normalizar_barrio(barrio)
+                                     
                 original_nodo = str(fila["1.NODO DEL POSTE."]).strip()  # Limpiar y convertir a string
     
                 # Si el nodo es 0, asignar un identificador único por OT
@@ -199,7 +221,19 @@ def procesar_archivo_modernizacion(file: UploadFile):
                             datos[ot]['codigos_n2'][key][nodo].add(str(codigo_n2).strip().upper())
                         except:
                             pass
-                    
+                        
+                    if cantidad > 0:
+                        nombre_material = str(col).split('.', 1)[-1].strip().upper()
+                        key = f"MATERIAL_RETIRADO|{nombre_material}"
+                        datos[ot]['materiales_retirados'][key][nodo] += cantidad
+
+                        # Capturar aspecto aquí
+                        aspecto = fila["1. Describa Aspectos que Considere se deben tener en cuenta."]
+                        if pd.notna(aspecto):
+                            aspecto_limpio = str(aspecto).strip().upper()
+                            if aspecto_limpio not in ['', 'NA', 'NINGUNO', 'N/A']:  # Filtrar valores no válidos
+                                datos[ot]['aspectos_retirados'][key][nodo].add(aspecto_limpio)
+                            
                     # PROCESAR MATERIALES RETIRADOS
                 for (tipo, n), col_codigo in codigo_columns.items():
                     codigo_val = fila.get(col_codigo)
@@ -241,9 +275,14 @@ def procesar_archivo_modernizacion(file: UploadFile):
                                 entry_name = f"{tipo} RETIRADA {n} {potencia_str}".strip()
                             else:
                                 entry_name = f"{tipo} RETIRADA {n}".strip()
+                                
                         key = f"MATERIAL_RETIRADO|{entry_name}"
                         datos[ot]['materiales_retirados'][key][nodo] += 1
-                            
+                        aspecto = fila["1. Describa Aspectos que Considere se deben tener en cuenta."]
+                        if pd.notna(aspecto):
+                            aspecto_limpio = str(aspecto).strip().upper()
+                            if aspecto_limpio not in ['', 'NA', 'NINGUNO', 'N/A']:  # Filtrar valores no válidos
+                                datos[ot]['aspectos_retirados'][key][nodo].add(aspecto_limpio)  
                 # Procesar materiales INSTALADOS
                 for mat_col, cant_col in zip(material_cols, cantidad_cols):
                     material = fila[mat_col]
@@ -251,8 +290,14 @@ def procesar_archivo_modernizacion(file: UploadFile):
                     if pd.notna(material) and pd.notna(cantidad) and float(cantidad) > 0.0:
                         key = f"MATERIAL|{material}".strip().upper()
                         datos[ot]['materiales'][key][nodo] += cantidad  
+                        datos_por_barrio[barrio_normalizado]['materiales_instalados'][key][ot] += cantidad
+                        aspecto = fila["1. Describa Aspectos que Considere se deben tener en cuenta."]
+                        if pd.notna(aspecto):
+                            aspecto_limpio = str(aspecto).strip().upper()
+                            if aspecto_limpio not in ['', 'NA', 'NINGUNO', 'N/A']:  # Filtrar valores no válidos
+                                datos[ot]['aspectos_retirados'][key][nodo].add(aspecto_limpio)                               
                                                
-        return datos
+        return datos, datos_por_barrio
 
     except Exception as e:
         logger.error(f"Error procesando {file.filename}: {str(e)}")
@@ -322,7 +367,7 @@ def procesar_archivo_mantenimiento(file: UploadFile):
         logger.error(f"Error procesando {file.filename}: {str(e)}")
         raise HTTPException(500, detail=f"Error en archivo {file.filename}")
 
-def generar_excel(datos):
+def generar_excel(datos_combinados, datos_por_barrio_combinados):
     output = BytesIO()
     
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -330,84 +375,135 @@ def generar_excel(datos):
         writer.book.create_sheet(temp_sheet_name)
         sheets_created = False
         
-        if datos:                        
+        
+        generate_resumen_general(writer, datos_combinados)
+        
+        #for barrio_name, barrio_data in datos_por_barrio_combinados.items():
+            #generate_barrio_sheet(writer, barrio_data, barrio_name)
             
-            for ot, info in datos.items():
+        if datos_combinados:                        
+            
+            for ot, info in datos_combinados.items():
                 nodos_ordenados = sorted(info['nodos'])
-                #try:
-                    #nodos_ordenados = sorted(info['nodos'], key=lambda x: int(x) if x.isdigit() else x)
-                    #nodos_ordenados = sorted(info['nodos'], key=lambda x: str(x))
-                #except ValueError:
-                    #nodos_ordenados = sorted(info['nodos'])
+                num_nodos = len(nodos_ordenados)
+                # Obtener postes desde la fila "Nodos postes"
+                postes = [nodo.split('_')[0] for nodo in nodos_ordenados]  # Ej: ['1417541', '1417542']
+                # Columnas con formato Nodo_X (Poste_Y)
+                columnas = [
+                    'OT', 
+                    'Unidad', 
+                    'Cantidad Total', 
+                    *[f"Nodo_{i+1}" for i in range(num_nodos)]
+                ]
+                filas = []
                 
-                columnas = ['OT', 'Unidad', 'Cantidad Total'] + [f"Nodo_{i+1}" for i, _ in enumerate(nodos_ordenados)]
-                #columnas = ['OT', 'Unidad', 'Cantidad Total'] + [f"Nodo_{i+1} ({nodo})" for i, nodo in enumerate(nodos_ordenados)]
-                filas = []                
-                # Fila OT
-                filas.append([ot, '', ''] + [''] * len(nodos_ordenados))
-                # Fila Nodos
-                filas.append(['Nodos postes', '', ''] + nodos_ordenados)
+                # Fila OT y Nodos (con postes reales)
+                filas.append([ot, '', ''] + [''] * num_nodos)
+                filas.append(['Nodos postes', '', ''] + postes)  # Mostrar postes sin sufijo
                 
-                # Procesar Códigos N1 (solo para Modernización)
+                # ===== PROCESAR CÓDIGOS N1 Y N2 =====
+                def agregar_codigos(tipo_codigo, codigos_data):
+                    for key, nodos_data in codigos_data.items():
+                        total = sum(len(c) for c in nodos_data.values())
+                        fila = [key, 'UND', total]
+                        for nodo in nodos_ordenados:
+                            poste = nodo.split('_')[0]
+                            codigos = nodos_data.get(nodo, set())
+                            for codigo in codigos:
+                                fila = [key, 'UND', 1]  # Cada código tiene cantidad 1
+                                # Inicializar todas las columnas de nodos vacías
+                                fila += [''] * len(nodos_ordenados)
+                                # Encontrar el índice del nodo actual
+                                if nodo in nodos_ordenados:
+                                    idx = nodos_ordenados.index(nodo)
+                                    fila[3 + idx] = codigo  # Colocar el código en la columna correspondiente
+                                filas.append(fila)
+                
                 if 'codigos_n1' in info:
-                    for key, nodos_data in info['codigos_n1'].items():
-                        total = sum(len(codigos) for codigos in nodos_data.values())
-                        fila = [key, 'UND', total]
-                        for nodo in nodos_ordenados:
-                            codigos = ', '.join(nodos_data.get(nodo, set()))
-                            fila.append(codigos if codigos else '')
-                        filas.append(fila)
-                
-                # Procesar Códigos N2 (solo para Modernización)
+                    agregar_codigos("N1", info['codigos_n1'])
                 if 'codigos_n2' in info:
-                    for key, nodos_data in info['codigos_n2'].items():
-                        total = sum(len(codigos) for codigos in nodos_data.values())
-                        fila = [key, 'UND', total]
-                        for nodo in nodos_ordenados:
-                            codigos = ', '.join(nodos_data.get(nodo, set()))
-                            fila.append(codigos if codigos else '')
-                        filas.append(fila)
-                        
-                filas.append(['MATERIALES INSTALADOS', '', ''] + [''] * len(nodos_ordenados)) #"", ""] + [''] * len(nodos_ordenados))
+                    agregar_codigos("N2", info['codigos_n2'])
                 
-                # Procesar Materiales Instalados (orden alfabético)
-                #for material_key in sorted(info['materiales'].keys(), key=lambda x: x.split('|', 1)[1].lower()):
-                for material_key in info['materiales'].keys():
+                # ===== MATERIALES INSTALADOS =====
+                filas.append(['MATERIALES INSTALADOS', '', ''] + [''] * num_nodos)
+                for material_key in info['materiales']:
                     try:
                         _, nombre = material_key.split('|', 1)
                         cantidades = info['materiales'][material_key]
                         total = sum(cantidades.values())
-                        fila = [
-                            nombre,
-                            'UND',
-                            total,
-                            *[int(cant) if isinstance(cant, (int, float)) else 0 for cant in (cantidades.get(nodo, 0) for nodo in nodos_ordenados)]
-                        ]
+                        fila = [nombre, 'UND', total] + [cantidades.get(n, 0) for n in nodos_ordenados]
                         filas.append(fila)
                     except Exception as e:
                         logger.error(f"Error procesando material: {str(e)}")
                         continue
-
-                # Agregar encabezado de Materiales Retirados
-                filas.append(['MATERIALES RETIRADOS', '', ''] + [''] * len(nodos_ordenados))
-
-                # Procesar Materiales Retirados (orden alfabético)
-                #for material_key in sorted(info.get('materiales_retirados', {}).keys(), key=lambda x: x.split('|', 1)[1].lower()):
-                for material_key in info.get('materiales_retirados', {}).keys():
+                
+                # ===== OBSERVACIONES INSTALADOS (POSTE + CÓDIGO + MATERIAL) =====
+                filas.append(['OBSERVACIONES INSTALADOS', '', ''] + [''] * num_nodos)
+                for material_key in info.get('aspectos_materiales', {}):
+                    tipo, material = material_key.split('|', 1)
+                    for nodo, aspectos in info['aspectos_materiales'][material_key].items():
+                        poste = nodo.split('_')[0]
+                        idx_poste = postes.index(poste)
+                        
+                        # Buscar código en N1 o N2 según corresponda
+                        codigo = next(
+                            (codigo 
+                             for key in (info.get('codigos_n1', {}) | info.get('codigos_n2', {})) 
+                             for n in (info.get('codigos_n1', {}).get(key, {}) | info.get('codigos_n2', {}).get(key, {})) 
+                             if n.split('_')[0] == poste 
+                             for codigo in (info.get('codigos_n1', {}).get(key, {}).get(n, set()) |  # Usar | en lugar de +
+                                           info.get('codigos_n2', {}).get(key, {}).get(n, set()))),  # Default a set()
+                            "Código no encontrado"
+                        )
+                        
+                        for aspecto in aspectos:
+                            fila_obs = [
+                                f"{poste}({codigo}) - {material}",  # Ej: 1417541(3H00588) - LUMINARIA INSTALADA 120W
+                                'Obs', 
+                                '',
+                                *['' if i != idx_poste else aspecto for i in range(num_nodos)]
+                            ]
+                            filas.append(fila_obs)
+                
+                # ===== MATERIALES RETIRADOS =====
+                filas.append(['MATERIALES RETIRADOS', '', ''] + [''] * num_nodos)
+                for material_key in info.get('materiales_retirados', {}):
                     try:
                         _, nombre = material_key.split('|', 1)
                         cantidades = info['materiales_retirados'][material_key]
                         total = sum(cantidades.values())
-                        fila = [
-                            nombre,
-                            'UND',
-                            total,
-                            *[int(cant) if isinstance(cant, (int, float)) else 0 for cant in (cantidades.get(nodo, 0) for nodo in nodos_ordenados)]
-                        ]
+                        fila = [nombre, 'UND', total] + [cantidades.get(n, 0) for n in nodos_ordenados]
                         filas.append(fila)
                     except Exception as e:
                         logger.error(f"Error procesando material retirado: {str(e)}")
                         continue
+                
+                # ===== OBSERVACIONES RETIRADOS (POSTE + CÓDIGO + MATERIAL) =====
+                filas.append(['OBSERVACIONES RETIRADOS', '', ''] + [''] * num_nodos)
+                for material_key in info.get('aspectos_retirados', {}):
+                    tipo, material = material_key.split('|', 1)
+                    for nodo, aspectos in info['aspectos_retirados'][material_key].items():
+                        poste = nodo.split('_')[0]
+                        idx_poste = postes.index(poste)
+                        
+                        codigo = next(
+                            (codigo 
+                             for key in (info.get('codigos_n1', {}) | info.get('codigos_n2', {})) 
+                             for n in (info.get('codigos_n1', {}).get(key, {}) | info.get('codigos_n2', {}).get(key, {})) 
+                             if n.split('_')[0] == poste 
+                             for codigo in (info.get('codigos_n1', {}).get(key, {}).get(n, set()) |  # Usar | en lugar de +
+                                           info.get('codigos_n2', {}).get(key, {}).get(n, set()))),  # Default a set()
+                            "Código no encontrado"
+                        )
+                        
+                        for aspecto in aspectos:
+                            fila_obs = [
+                                f"{poste}({codigo}) - {material}",  # Ej: 1417541(3Q00511) - LUMINARIA RETIRADA N1 150W
+                                'Obs', 
+                                '',
+                                *['' if i != idx_poste else aspecto for i in range(num_nodos)]
+                            ]
+                            filas.append(fila_obs)
                 
                 # Crear DataFrame a partir de los datos recopilados
                 df = pd.DataFrame(filas, columns=columnas)
@@ -443,6 +539,8 @@ def generar_excel(datos):
             if sheets_created:
                 writer.book.remove(writer.book[temp_sheet_name])
         
+        
+        
         # Manejo de errores
         if not sheets_created:
             writer.book.remove(writer.book[temp_sheet_name])
@@ -459,6 +557,259 @@ def generar_excel(datos):
     output.seek(0)
     return output
 
+def generate_resumen_general(writer, datos_combinados):
+    """
+    Genera hoja 'Resumen_general' consolidando todos los materiales de todas las OTs
+    """
+    from openpyxl.utils import get_column_letter
+    from openpyxl.styles import Font, Alignment, PatternFill
+    # Recolectar todos los materiales y OTs
+    instalados = {}
+    retirados = {}
+    luminarias = {}
+    ots = set()
+    
+    # Primero identificar todas las OTs
+    for ot in datos_combinados.keys():
+        ots.add(ot)
+    
+    # Ordenar OTs para mantener consistencia
+    ots_ordenadas = sorted(ots)
+    
+    # Ahora procesar todos los datos para cada tipo de material
+    for ot, info in datos_combinados.items():
+        # Proceso para códigos N1
+        for key, nodos_data in info.get('codigos_n1', {}).items():
+            nombre = f"LUMINARIA {key}"
+            if nombre not in luminarias:
+                luminarias[nombre] = {
+                    'tipo': 'LUMINARIA',
+                    'unidad': 'UND',
+                    'total': 0,
+                    'ots': defaultdict(int)
+                }
+            
+            # Contar el número total de códigos en todos los nodos para esta OT
+            codigos_count = sum(len(codigos) for codigos in nodos_data.values())
+            luminarias[nombre]['total'] += codigos_count
+            luminarias[nombre]['ots'][ot] += codigos_count
+        
+        # Proceso para códigos N2
+        for key, nodos_data in info.get('codigos_n2', {}).items():
+            nombre = f"LUMINARIA {key}"
+            if nombre not in luminarias:
+                luminarias[nombre] = {
+                    'tipo': 'LUMINARIA',
+                    'unidad': 'UND',
+                    'total': 0,
+                    'ots': defaultdict(int)
+                }
+            
+            # Contar el número total de códigos en todos los nodos para esta OT
+            codigos_count = sum(len(codigos) for codigos in nodos_data.values())
+            luminarias[nombre]['total'] += codigos_count
+            luminarias[nombre]['ots'][ot] += codigos_count
+            
+        # Procesar materiales instalados
+        for mat_key, nodo_quantities in info['materiales'].items():
+            _, nombre = mat_key.split('|', 1)
+            total = sum(nodo_quantities.values())
+            
+            if nombre not in instalados:
+                instalados[nombre] = {
+                    'tipo': 'INSTALADO',
+                    'unidad': 'UND',
+                    'total': 0,
+                    'ots': defaultdict(int)
+                }
+            instalados[nombre]['total'] += total
+            instalados[nombre]['ots'][ot] += total
+        
+        # Procesar materiales retirados
+        for mat_key, nodo_quantities in info.get('materiales_retirados', {}).items():
+            _, nombre = mat_key.split('|', 1)
+            total = sum(nodo_quantities.values())
+            
+            if nombre not in retirados:
+                retirados[nombre] = {
+                    'tipo': 'RETIRADO',
+                    'unidad': 'UND',
+                    'total': 0,
+                    'ots': defaultdict(int)
+                }
+            retirados[nombre]['total'] += total
+            retirados[nombre]['ots'][ot] += total
+
+    # Verificación de totales y depuración
+    for nombre, info in luminarias.items():
+        # Recalcular el total sumando todas las cantidades por OT para confirmar
+        total_from_ots = sum(info['ots'].values())
+        if info['total'] != total_from_ots:
+            # Ajustar si hay discrepancia
+            info['total'] = total_from_ots
+    
+    # Crear DataFrames para cada sección
+    columns = ['Nombre Material', 'Unidad', 'Cantidad Total'] + [f'OT_{ot}' for ot in ots_ordenadas]
+    
+    # Si no hay datos, salir
+    if not (luminarias or instalados or retirados):
+        return
+
+    # Escribir directamente al Excel sin usar pandas para mayor control
+    sheet_name = 'Resumen_general'
+    worksheet = writer.book.create_sheet(sheet_name)
+    
+    # Configuración de estilos
+    header_font = Font(bold=True)
+    section_font = Font(bold=True, size=12)
+    section_fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
+    center_alignment = Alignment(horizontal='center', vertical='center')
+    
+    # Escribir encabezados de columnas
+    for col, header in enumerate(columns, 1):
+        cell = worksheet.cell(row=1, column=col, value=header)
+        cell.font = header_font
+    
+    current_row = 2
+    
+    # Función para escribir una sección
+    def write_section(title, data, row):
+        # Encabezado de sección
+        cell = worksheet.cell(row=row, column=1, value=title)
+        cell.font = section_font
+        cell.fill = section_fill
+        cell.alignment = center_alignment
+        
+        # Combinar celdas para el encabezado
+        worksheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=len(columns))
+        
+        row += 1
+        
+        # Escribir datos
+        for nombre, info in sorted(data.items()):
+            worksheet.cell(row=row, column=1, value=nombre)
+            worksheet.cell(row=row, column=2, value=info['unidad'])
+            worksheet.cell(row=row, column=3, value=info['total'])
+            
+            # Cantidades por OT
+            for i, ot in enumerate(ots_ordenadas, 4):
+                worksheet.cell(row=row, column=i, value=info['ots'].get(ot, 0))
+            
+            row += 1
+            
+        return row
+
+    # Escribir sección de luminarias
+    if luminarias:
+        current_row = write_section("LUMINARIAS INSTALADAS", luminarias, current_row)
+        current_row += 1  # Espacio entre secciones
+    
+    # Escribir sección de materiales instalados
+    if instalados:
+        current_row = write_section("MATERIALES INSTALADOS", instalados, current_row)
+        current_row += 1  # Espacio entre secciones
+    
+    # Escribir sección de materiales retirados
+    if retirados:
+        current_row = write_section("MATERIALES RETIRADOS", retirados, current_row)
+    
+    # Ajustar anchos de columna
+    for idx, col in enumerate(columns, 1):
+        col_width = len(str(col)) + 2
+        # Para la primera columna, usar un ancho mayor
+        if idx == 1:
+            col_width = 40
+        worksheet.column_dimensions[get_column_letter(idx)].width = col_width
+    
+    # Configurar congelación de paneles
+    worksheet.freeze_panes = 'D2'
+    
+    
+def generate_barrio_sheet(writer, barrio_data, barrio_name):
+    """
+    Genera hoja de resumen para un barrio específico
+    """
+    from openpyxl.utils import get_column_letter
+    
+    # Normalizar nombre de hoja
+    sheet_name = f"{barrio_name.strip().replace('/', '_')[:25]}_R"[:31]
+    
+    # Recolectar datos del barrio
+    materials = {}
+    ots = set()
+    
+    # Procesar materiales instalados
+    for mat_key, ot_quantities in barrio_data['materiales_instalados'].items():
+        _, nombre = mat_key.split('|', 1)
+        for ot, cantidad in ot_quantities.items():
+            ots.add(ot)
+            key = (nombre, 'INSTALADO')
+            
+            if key not in materials:
+                materials[key] = {
+                    'nombre': nombre,
+                    'unidad': 'UND',
+                    'total': 0,
+                    'ots': defaultdict(int)
+                }
+            materials[key]['total'] += cantidad
+            materials[key]['ots'][ot] += cantidad
+    
+    # Procesar materiales retirados
+    for mat_key, ot_quantities in barrio_data['materiales_retirados'].items():
+        _, nombre = mat_key.split('|', 1)
+        for ot, cantidad in ot_quantities.items():
+            ots.add(ot)
+            key = (f"{nombre} (RETIRADO)", 'RETIRADO')
+            
+            if key not in materials:
+                materials[key] = {
+                    'nombre': key[0],
+                    'unidad': 'UND',
+                    'total': 0,
+                    'ots': defaultdict(int)
+                }
+            materials[key]['total'] += cantidad
+            materials[key]['ots'][ot] += cantidad
+
+    # Crear DataFrame
+    rows = []
+    for key, data in materials.items():
+        row = {
+            'Nombre Material': data['nombre'],
+            'Unidad': data['unidad'],
+            'Cantidad Total': data['total']
+        }
+        
+        # Agregar columnas por OT
+        for ot in ots:
+            row[f'OT_{ot}'] = data['ots'].get(ot, 0)
+        
+        rows.append(row)
+    
+    if not rows:
+        return
+
+    df = pd.DataFrame(rows)
+    columns = ['Nombre Material', 'Unidad', 'Cantidad Total'] + sorted([f'OT_{ot}' for ot in ots], key=lambda x: x.split('_')[1])
+    df = df[columns]
+
+    # Escribir en Excel
+    df.to_excel(writer, sheet_name=sheet_name, index=False)
+    
+    # Formatear hoja
+    workbook = writer.book
+    worksheet = writer.sheets[sheet_name]
+    
+    # Ajustar anchos de columna
+    for idx, col in enumerate(df.columns, 1):
+        max_len = max(
+            df[col].astype(str).map(len).max(),
+            len(col))
+        worksheet.column_dimensions[get_column_letter(idx)].width = max_len + 2
+
+    # Congelar paneles
+    worksheet.freeze_panes = 'D2'
 
 def agregar_tabla_mano_obra(worksheet, df, plantilla):
     from openpyxl.styles import Font, Border, Side, Alignment
@@ -510,17 +861,38 @@ async def subir_archivos(
             'codigos_n1': defaultdict(lambda: defaultdict(set)),
             'codigos_n2': defaultdict(lambda: defaultdict(set)),
             'materiales': defaultdict(lambda: defaultdict(int)),
-            'materiales_retirados': defaultdict(lambda: defaultdict(int))
+            'materiales_retirados': defaultdict(lambda: defaultdict(int)),
+            'aspectos_materiales': defaultdict(lambda: defaultdict(lambda: set())),  # Añadir
+            'aspectos_retirados': defaultdict(lambda: defaultdict(lambda: set()))     # Añadir
+        })
+        
+        datos_por_barrio_combinados = defaultdict(lambda: {
+            'materiales_instalados': defaultdict(lambda: defaultdict(int)),
+            'materiales_retirados': defaultdict(lambda: defaultdict(int)),
         })
 
         for file in files:
             try:
                 if tipo_archivo == 'modernizacion':
-                    datos = procesar_archivo_modernizacion(file)
+                    datos, datos_por_barrio = procesar_archivo_modernizacion(file)
                 elif tipo_archivo == 'mantenimiento':
                     datos = procesar_archivo_mantenimiento(file)
                 else:
                     raise ValueError("Tipo de archivo no válido")
+
+                # Combinar datos por barrio
+                for barrio, barrio_info in datos_por_barrio.items():
+                    # Materiales instalados
+                    for mat_key, ot_counts in barrio_info['materiales_instalados'].items():
+                        for ot, cantidad in ot_counts.items():
+                            datos_por_barrio_combinados[barrio]['materiales_instalados'][mat_key][ot] += cantidad
+                    
+                    # Materiales retirados (solo modernización)
+                    if tipo_archivo == 'modernizacion':
+                        for mat_key, ot_counts in barrio_info['materiales_retirados'].items():
+                            for ot, cantidad in ot_counts.items():
+                                datos_por_barrio_combinados[barrio]['materiales_retirados'][mat_key][ot] += cantidad
+                            
 
                 # Combinar datos comunes
                 for ot, info in datos.items():
@@ -548,12 +920,22 @@ async def subir_archivos(
                         for mat_key, cantidades in info.get('materiales_retirados', {}).items():
                             for nodo, cantidad in cantidades.items():
                                 datos_combinados[ot]['materiales_retirados'][mat_key][nodo] += cantidad
+                        
+                        # Combinar aspectos materiales instalados
+                        for mat_key, nodos_aspectos in info.get('aspectos_materiales', {}).items():
+                            for nodo, aspectos in nodos_aspectos.items():
+                                datos_combinados[ot]['aspectos_materiales'][mat_key][nodo].update(aspectos)
+
+                        # Combinar aspectos materiales retirados
+                        for mat_key, nodos_aspectos in info.get('aspectos_retirados', {}).items():
+                            for nodo, aspectos in nodos_aspectos.items():
+                                datos_combinados[ot]['aspectos_retirados'][mat_key][nodo].update(aspectos)
 
             except Exception as e:
                 logger.error(f"Error con {file.filename}: {str(e)}")
                 continue
 
-        excel_final = generar_excel(datos_combinados)
+        excel_final = generar_excel(datos_combinados, datos_por_barrio_combinados)
         
         return Response(
             content=excel_final.getvalue(),
