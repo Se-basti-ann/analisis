@@ -1,7 +1,4 @@
-from ctypes import alignment
-from email import header
 import os
-from tkinter.font import Font
 from openpyxl.utils import column_index_from_string
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,10 +13,9 @@ logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://main.d32bb122o9jw4d.amplifyapp.com"],  # Permite solo este frontend
-    allow_credentials=True,
-    allow_methods=["*"],  # Permite todos los métodos (GET, POST, etc.)
-    allow_headers=["*"],  # Permite todos los headers
+    allow_origins=["https://main.d32bb122o9jw4d.amplifyapp.com"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 def normalizar_barrio(barrio):
@@ -72,8 +68,9 @@ def procesar_archivo_modernizacion(file: UploadFile):
             'codigos_n2': defaultdict(lambda: defaultdict(set)),
             'materiales': defaultdict(lambda: defaultdict(int)),    
             'materiales_retirados': defaultdict(lambda: defaultdict(int)),
-            'aspectos_materiales': defaultdict(lambda: defaultdict(lambda: set())),  # Nuevo campo
-            'aspectos_retirados': defaultdict(lambda: defaultdict(lambda: set()))     # Nuevo campo
+            'aspectos_materiales': defaultdict(lambda: defaultdict(lambda: set())),
+            'aspectos_retirados': defaultdict(lambda: defaultdict(lambda: set())),
+            'fechas_sync': defaultdict(str)  # Nuevo campo para almacenar fechas de sincronización
         })                 
         
         datos_por_barrio = defaultdict(lambda: {
@@ -153,6 +150,9 @@ def procesar_archivo_modernizacion(file: UploadFile):
                 barrio_normalizado = normalizar_barrio(barrio)
                                      
                 original_nodo = str(fila["1.NODO DEL POSTE."]).strip()  # Limpiar y convertir a string
+                
+                # Guardar la fecha de sincronización para este nodo/registro
+                fecha_sincronizacion = fila["FechaSincronizacion"]
     
                 # Si el nodo es 0, asignar un identificador único por OT
                 if original_nodo in ['0', '0.0']:
@@ -163,8 +163,14 @@ def procesar_archivo_modernizacion(file: UploadFile):
                     datos[ot]['nodo_counts'][original_nodo] = count
                     nodo = f"{original_nodo}_{count}" if count > 1 else original_nodo                  
                 #datos[ot]['nodos'].add(nodo)             
-                datos[ot]['nodos'].append(nodo)                   
+                datos[ot]['nodos'].append(nodo)
                 
+                # Guardar la fecha de sincronización para este nodo
+                if pd.notna(fecha_sincronizacion):
+                    datos[ot]['fechas_sync'][nodo] = fecha_sincronizacion.strftime('%d/%m/%Y %H:%M:%S')
+                else:
+                    datos[ot]['fechas_sync'][nodo] = "Sin fecha"
+                                    
                 codigo_n1 = fila["2.CODIGO DE LUMINARIA INSTALADA N1."]
                 potencia_n1 = fila["3.POTENCIA DE LUMINARIA INSTALADA (W)"]
                 
@@ -233,7 +239,7 @@ def procesar_archivo_modernizacion(file: UploadFile):
                         if pd.notna(aspecto):
                             aspecto_limpio = str(aspecto).strip().upper()
                             if aspecto_limpio not in ['', 'NA', 'NINGUNO', 'N/A']:  # Filtrar valores no válidos
-                                datos[ot]['aspectos_retirados'][key][nodo].add(aspecto_limpio)
+                                datos[ot]['aspectos_materiales'][key][nodo].add(aspecto_limpio)
                             
                     # PROCESAR MATERIALES RETIRADOS
                 for (tipo, n), col_codigo in codigo_columns.items():
@@ -374,18 +380,15 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados):
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         temp_sheet_name = "PlantillaInicial"
         writer.book.create_sheet(temp_sheet_name)
-        sheets_created = False
-        
+        sheets_created = False        
         
         generate_resumen_general(writer, datos_combinados)
-        
-        #for barrio_name, barrio_data in datos_por_barrio_combinados.items():
-            #generate_barrio_sheet(writer, barrio_data, barrio_name)
-            
+                            
         if datos_combinados:                        
             
             for ot, info in datos_combinados.items():
-                nodos_ordenados = sorted(info['nodos'])
+                seen = set()
+                nodos_ordenados = [n for n in info['nodos'] if not (n in seen or seen.add(n))]
                 num_nodos = len(nodos_ordenados)
                 # Obtener postes desde la fila "Nodos postes"
                 postes = [nodo.split('_')[0] for nodo in nodos_ordenados]  # Ej: ['1417541', '1417542']
@@ -393,31 +396,38 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados):
                 columnas = [
                     'OT', 
                     'Unidad', 
-                    'Cantidad Total', 
+                    'Cantidad Total',
+                    'Fecha Sincronización',  # Esta columna ahora solo tendrá contenido para observaciones
                     *[f"Nodo_{i+1}" for i in range(num_nodos)]
                 ]
                 filas = []
                 
                 # Fila OT y Nodos (con postes reales)
-                filas.append([ot, '', ''] + [''] * num_nodos)
-                filas.append(['Nodos postes', '', ''] + postes)  # Mostrar postes sin sufijo
+                filas.append([ot, '', '', ''] + [''] * num_nodos)
+                filas.append(['Nodos postes', '', '', ''] + postes)  # Mostrar postes sin sufijo
+                
+                # Agregar fila con fechas de sincronización de cada nodo
+                fechas_fila = ['Fechas Sincronización', '', '', '']
+                for nodo in nodos_ordenados:
+                    fecha = info['fechas_sync'].get(nodo, "Sin fecha")
+                    fechas_fila.append(fecha)
+                filas.append(fechas_fila)
                 
                 # ===== PROCESAR CÓDIGOS N1 Y N2 =====
                 def agregar_codigos(tipo_codigo, codigos_data):
                     for key, nodos_data in codigos_data.items():
                         total = sum(len(c) for c in nodos_data.values())
-                        fila = [key, 'UND', total]
                         for nodo in nodos_ordenados:
                             poste = nodo.split('_')[0]
                             codigos = nodos_data.get(nodo, set())
                             for codigo in codigos:
-                                fila = [key, 'UND', 1]  # Cada código tiene cantidad 1
+                                fila = [key, 'UND', 1, '']  # Celda de fecha vacía para códigos
                                 # Inicializar todas las columnas de nodos vacías
                                 fila += [''] * len(nodos_ordenados)
                                 # Encontrar el índice del nodo actual
                                 if nodo in nodos_ordenados:
                                     idx = nodos_ordenados.index(nodo)
-                                    fila[3 + idx] = codigo  # Colocar el código en la columna correspondiente
+                                    fila[4 + idx] = codigo
                                 filas.append(fila)
                 
                 if 'codigos_n1' in info:
@@ -426,85 +436,107 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados):
                     agregar_codigos("N2", info['codigos_n2'])
                 
                 # ===== MATERIALES INSTALADOS =====
-                filas.append(['MATERIALES INSTALADOS', '', ''] + [''] * num_nodos)
+                filas.append(['MATERIALES INSTALADOS', '', '', ''] + [''] * num_nodos)
                 for material_key in info['materiales']:
                     try:
                         _, nombre = material_key.split('|', 1)
                         cantidades = info['materiales'][material_key]
                         total = sum(cantidades.values())
-                        fila = [nombre, 'UND', total] + [cantidades.get(n, 0) for n in nodos_ordenados]
+                        # Celda de fecha vacía para materiales instalados
+                        fila = [nombre, 'UND', total, ''] + [cantidades.get(n, 0) for n in nodos_ordenados]
                         filas.append(fila)
                     except Exception as e:
                         logger.error(f"Error procesando material: {str(e)}")
-                        continue
-                
-                # ===== OBSERVACIONES INSTALADOS (POSTE + CÓDIGO + MATERIAL) =====
-                filas.append(['OBSERVACIONES INSTALADOS', '', ''] + [''] * num_nodos)
-                for material_key in info.get('aspectos_materiales', {}):
-                    tipo, material = material_key.split('|', 1)
-                    for nodo, aspectos in info['aspectos_materiales'][material_key].items():
-                        poste = nodo.split('_')[0]
-                        idx_poste = postes.index(poste)
-                        
-                        # Buscar código en N1 o N2 según corresponda
-                        codigo = next(
-                            (codigo 
-                             for key in (info.get('codigos_n1', {}) | info.get('codigos_n2', {})) 
-                             for n in (info.get('codigos_n1', {}).get(key, {}) | info.get('codigos_n2', {}).get(key, {})) 
-                             if n.split('_')[0] == poste 
-                             for codigo in (info.get('codigos_n1', {}).get(key, {}).get(n, set()) |  # Usar | en lugar de +
-                                           info.get('codigos_n2', {}).get(key, {}).get(n, set()))),  # Default a set()
-                            "Código no encontrado"
-                        )
-                        
-                        for aspecto in aspectos:
-                            fila_obs = [
-                                f"{poste}({codigo}) - {material}",  # Ej: 1417541(3H00588) - LUMINARIA INSTALADA 120W
-                                'Obs', 
-                                '',
-                                *['' if i != idx_poste else aspecto for i in range(num_nodos)]
-                            ]
-                            filas.append(fila_obs)
+                        continue                                
                 
                 # ===== MATERIALES RETIRADOS =====
-                filas.append(['MATERIALES RETIRADOS', '', ''] + [''] * num_nodos)
+                filas.append(['MATERIALES RETIRADOS', '', '', ''] + [''] * num_nodos)
                 for material_key in info.get('materiales_retirados', {}):
                     try:
                         _, nombre = material_key.split('|', 1)
                         cantidades = info['materiales_retirados'][material_key]
                         total = sum(cantidades.values())
-                        fila = [nombre, 'UND', total] + [cantidades.get(n, 0) for n in nodos_ordenados]
+                        # Celda de fecha vacía para materiales retirados
+                        fila = [nombre, 'UND', total, ''] + [cantidades.get(n, 0) for n in nodos_ordenados]
                         filas.append(fila)
                     except Exception as e:
                         logger.error(f"Error procesando material retirado: {str(e)}")
                         continue
                 
-                # ===== OBSERVACIONES RETIRADOS (POSTE + CÓDIGO + MATERIAL) =====
-                filas.append(['OBSERVACIONES RETIRADOS', '', ''] + [''] * num_nodos)
-                for material_key in info.get('aspectos_retirados', {}):
-                    tipo, material = material_key.split('|', 1)
-                    for nodo, aspectos in info['aspectos_retirados'][material_key].items():
+                # ===== GARANTIZAR COBERTURA TOTAL DE NODOS =====
+                filas.append(['OBSERVACIONES COMPLETAS', '', '', ''] + [''] * num_nodos)
+
+                # Diccionario para trackear nodos procesados
+                observaciones_ordenadas = []
+
+                # Recorrer nodos en ORDEN CRONOLÓGICO ORIGINAL
+                for nodo in nodos_ordenados:
+                    poste = nodo.split('_')[0]
+
+                    # 1. Obtener códigos asociados
+                    codigos = set()
+                    for key in info['codigos_n1']:
+                        codigos.update(info['codigos_n1'][key].get(nodo, set()))
+                    for key in info['codigos_n2']:
+                        codigos.update(info['codigos_n2'][key].get(nodo, set()))
+
+                    if not codigos:
+                        codigos.add("Sin código")
+
+                    # 2. Obtener observaciones
+                    aspectos = []
+                    for mat_key in info['aspectos_materiales']:
+                        aspectos.extend(info['aspectos_materiales'][mat_key].get(nodo, []))
+                    for mat_key in info['aspectos_retirados']:
+                        aspectos.extend(info['aspectos_retirados'][mat_key].get(nodo, []))
+
+                    if not aspectos:
+                        aspectos.append("Sin observaciones")
+
+                    # 3. Registrar todas las entradas
+                    for codigo in sorted(codigos):
+                        texto_obs = '\n'.join([f"{i+1}. {obs}" for i, obs in enumerate(aspectos)])
+                        fecha = info['fechas_sync'].get(nodo, "Sin fecha")
+                        observaciones_ordenadas.append({
+                            'orden': len(observaciones_ordenadas) + 1,
+                            'clave': f"{poste} - {codigo}",
+                            'observaciones': texto_obs,
+                            'nodo': nodo,
+                            'fecha': fecha  # Guardar la fecha para ordenar y mostrar
+                        })
+
+                # 4. Agregar nodos faltantes
+                nodos_procesados = {obs['nodo'] for obs in observaciones_ordenadas}
+                for nodo in nodos_ordenados:
+                    if nodo not in nodos_procesados:
                         poste = nodo.split('_')[0]
-                        idx_poste = postes.index(poste)
-                        
-                        codigo = next(
-                            (codigo 
-                             for key in (info.get('codigos_n1', {}) | info.get('codigos_n2', {})) 
-                             for n in (info.get('codigos_n1', {}).get(key, {}) | info.get('codigos_n2', {}).get(key, {})) 
-                             if n.split('_')[0] == poste 
-                             for codigo in (info.get('codigos_n1', {}).get(key, {}).get(n, set()) |  # Usar | en lugar de +
-                                           info.get('codigos_n2', {}).get(key, {}).get(n, set()))),  # Default a set()
-                            "Código no encontrado"
-                        )
-                        
-                        for aspecto in aspectos:
-                            fila_obs = [
-                                f"{poste}({codigo}) - {material}",  # Ej: 1417541(3Q00511) - LUMINARIA RETIRADA N1 150W
-                                'Obs', 
-                                '',
-                                *['' if i != idx_poste else aspecto for i in range(num_nodos)]
-                            ]
-                            filas.append(fila_obs)
+                        fecha = info['fechas_sync'].get(nodo, "Sin fecha")
+                        observaciones_ordenadas.append({
+                            'orden': len(observaciones_ordenadas) + 1,
+                            'clave': f"{poste} - Sin código",
+                            'observaciones': "1. Sin observaciones",
+                            'nodo': nodo,
+                            'fecha': fecha
+                        })
+
+                # 5. Ordenar por fecha de sincronización (de menor a mayor)
+                observaciones_ordenadas_por_fecha = sorted(
+                    observaciones_ordenadas,
+                    key=lambda x: pd.to_datetime(x['fecha'], errors='coerce', format='%d/%m/%Y %H:%M:%S')
+                )
+
+                # 6. Agregar al Excel - SOLO para observaciones incluimos la fecha
+                for obs in observaciones_ordenadas_por_fecha:
+                    fila = [
+                        obs['clave'],
+                        'Obs',
+                        obs['observaciones'],
+                        obs['fecha'],  # Incluir la fecha SOLO para las observaciones
+                        *['' for _ in range(num_nodos)]
+                    ]
+                    filas.append(fila)
+                    
+            
                 
                 # Crear DataFrame a partir de los datos recopilados
                 df = pd.DataFrame(filas, columns=columnas)
@@ -539,7 +571,6 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados):
             # Eliminar hoja temporal si se crearon hojas
             if sheets_created:
                 writer.book.remove(writer.book[temp_sheet_name])
-        
         
         
         # Manejo de errores
@@ -864,7 +895,8 @@ async def subir_archivos(
             'materiales': defaultdict(lambda: defaultdict(int)),
             'materiales_retirados': defaultdict(lambda: defaultdict(int)),
             'aspectos_materiales': defaultdict(lambda: defaultdict(lambda: set())),  # Añadir
-            'aspectos_retirados': defaultdict(lambda: defaultdict(lambda: set()))     # Añadir
+            'aspectos_retirados': defaultdict(lambda: defaultdict(lambda: set())),     # Añadir
+            'fechas_sync': defaultdict(str)  # Add this line
         })
         
         datos_por_barrio_combinados = defaultdict(lambda: {
@@ -901,6 +933,10 @@ async def subir_archivos(
                     datos_combinados[ot]['nodos'].update(info['nodos'])
                     
                     # Materiales instalados
+                    if 'fechas_sync' in info:
+                        for nodo, fecha in info['fechas_sync'].items():
+                            datos_combinados[ot]['fechas_sync'][nodo] = fecha
+                            
                     for mat_key, cantidades in info.get('materiales', {}).items():
                         for nodo, cantidad in cantidades.items():
                             datos_combinados[ot]['materiales'][mat_key][nodo] += cantidad                                        
