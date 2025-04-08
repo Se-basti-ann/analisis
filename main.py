@@ -185,17 +185,20 @@ def procesar_archivo_modernizacion(file: UploadFile):
                     else:
                         cantidad = int(cantidad)  # Asegurar entero
                     #if pd.notna(cantidad) and float(cantidad) > 0:
-                    if (
-                        pd.notna(codigo_n1) 
-                        and str(codigo_n1).strip() not in ['', '0', '0.0']
-                        or pd.notna(potencia_n1) != "0"
-                        and float(potencia_n1) != 0                        
-                    ):
+                    if cantidad > 0:
                         nombre_material = str(col).split('.', 1)[-1].strip().upper()
                         key = f"MATERIAL_RETIRADO|{nombre_material}"
                         datos[ot]['materiales_retirados'][key][nodo] += cantidad
-                                            
-                    #if pd.notna(codigo_n1) and pd.notna(potencia_n1):
+                
+                        # Capture aspect here
+                        aspecto = fila["1. Describa Aspectos que Considere se deben tener en cuenta."]
+                        if pd.notna(aspecto):
+                            aspecto_limpio = str(aspecto).strip().upper()
+                            if aspecto_limpio not in ['', 'NA', 'NINGUNO', 'N/A']:
+                                datos[ot]['aspectos_retirados'][key][nodo].add(aspecto_limpio)
+                    
+                    # Process N1 and N2 code information separately - don't add materials here
+                    if pd.notna(codigo_n1) and str(codigo_n1).strip() not in ['', '0', '0.0'] or pd.notna(potencia_n1) and str(potencia_n1) != "0" and float(potencia_n1) != 0:
                         try:
                             potencia_val = float(potencia_n1)
                             if potencia_val == 0:
@@ -207,7 +210,7 @@ def procesar_archivo_modernizacion(file: UploadFile):
                                     key = f"CODIGO 1 LUMINARIA INSTALADA {potencia_val} W"
                             datos[ot]['codigos_n1'][key][nodo].add(str(codigo_n1).strip().upper())
                         except:
-                            pass                                    
+                            pass                          
                 
                     if (
                         pd.notna(codigo_n2)
@@ -228,18 +231,7 @@ def procesar_archivo_modernizacion(file: UploadFile):
                             datos[ot]['codigos_n2'][key][nodo].add(str(codigo_n2).strip().upper())
                         except:
                             pass
-                        
-                    if cantidad > 0:
-                        nombre_material = str(col).split('.', 1)[-1].strip().upper()
-                        key = f"MATERIAL_RETIRADO|{nombre_material}"
-                        datos[ot]['materiales_retirados'][key][nodo] += cantidad
-
-                        # Capturar aspecto aquí
-                        aspecto = fila["1. Describa Aspectos que Considere se deben tener en cuenta."]
-                        if pd.notna(aspecto):
-                            aspecto_limpio = str(aspecto).strip().upper()
-                            if aspecto_limpio not in ['', 'NA', 'NINGUNO', 'N/A']:  # Filtrar valores no válidos
-                                datos[ot]['aspectos_materiales'][key][nodo].add(aspecto_limpio)
+                                            
                             
                     # PROCESAR MATERIALES RETIRADOS
                 for (tipo, n), col_codigo in codigo_columns.items():
@@ -755,8 +747,7 @@ def generate_resumen_general(writer, datos_combinados):
     
     # Configurar congelación de paneles
     worksheet.freeze_panes = 'D2'
-    
-    
+        
 def generate_barrio_sheet(writer, barrio_data, barrio_name):
     """
     Genera hoja de resumen para un barrio específico
@@ -983,3 +974,5 @@ async def subir_archivos(
     except Exception as e:
         logger.critical(f"Error global: {str(e)}")
         raise HTTPException(500, detail=str(e))
+    
+    
