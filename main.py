@@ -256,6 +256,7 @@ def normalizar_barrio(barrio):
         return 'Sin barrio'
     return barrio_str.title().strip()
            
+
 def procesar_archivo_modernizacion(file: UploadFile):
     try:
         contenido = file.file.read()
@@ -284,6 +285,9 @@ def procesar_archivo_modernizacion(file: UploadFile):
         COL_FIN = "BO"
         idx_inicio = column_index_from_string(COL_INICIO) - 1
         idx_fin = column_index_from_string(COL_FIN) - 1
+        
+        # Diccionario para normalizar nodos
+        nodos_normalizados = {}
         
         for hoja in xls.sheet_names:
             df = xls.parse(hoja)
@@ -355,15 +359,24 @@ def procesar_archivo_modernizacion(file: UploadFile):
                 # Guardar la fecha de sincronización para este nodo/registro
                 fecha_sincronizacion = fila["FechaSincronizacion"]
     
-                # Si el nodo es 0, asignar un identificador único por OT
-                if original_nodo in ['0', '0.0']:
+                # Normalizar nodos con valor 0 o similares
+                if original_nodo in ['0', '0.0', '0.00', 'nan', 'NaN', 'None', '']:
+                    # Usar un formato consistente para todos los nodos "0"
                     counter_0[ot] += 1
-                    nodo = f"0_{counter_0[ot]}"  # Ejemplo: 0_1, 0_2, etc.
+                    nodo = f"0_{ot}_{counter_0[ot]}"  # Formato: 0_OT_contador
                 else:
-                    count = datos[ot]['nodo_counts'][original_nodo] + 1
-                    datos[ot]['nodo_counts'][original_nodo] = count
-                    nodo = f"{original_nodo}_{count}" if count > 1 else original_nodo                  
-                #datos[ot]['nodos'].add(nodo)             
+                    # Normalizar el formato del nodo para evitar duplicados por formato
+                    nodo_normalizado = original_nodo.replace('.0', '').replace('.00', '')
+                    
+                    # Verificar si este nodo ya ha sido normalizado antes
+                    if (ot, nodo_normalizado) in nodos_normalizados:
+                        nodo = nodos_normalizados[(ot, nodo_normalizado)]
+                    else:
+                        count = datos[ot]['nodo_counts'][nodo_normalizado] + 1
+                        datos[ot]['nodo_counts'][nodo_normalizado] = count
+                        nodo = f"{nodo_normalizado}_{count}" if count > 1 else nodo_normalizado
+                        nodos_normalizados[(ot, nodo_normalizado)] = nodo
+                
                 datos[ot]['nodos'].append(nodo)
                 
                 # Guardar la fecha de sincronización para este nodo
@@ -502,7 +515,7 @@ def procesar_archivo_modernizacion(file: UploadFile):
     except Exception as e:
         logger.error(f"Error procesando {file.filename}: {str(e)}")
         raise HTTPException(500, detail=f"Error en archivo {file.filename}")
-
+    
 def procesar_archivo_mantenimiento(file: UploadFile):
     try:
         contenido = file.file.read()
@@ -1437,14 +1450,37 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                         materiales_inst.append(comp_material_name)
     
     # 3. Mano de obra para conexión a tierra e instalación de kit SPT
-    elif any(keyword in descripcion_upper for keyword in ["CONEXIÓN A CABLE A TIERRA", "INSTALACION KIT SPT", "INSTALACION DE ATERRIZAJES"]):
-        kit_keywords = ["KIT DE PUESTA A TIERRA", "CONECT PERF", "CONECTOR BIME", "ALAMBRE", "VARILLA", "TIERRA", "CONECTOR VARILLA"]
+    elif any(keyword in descripcion_upper for keyword in ["CONEXIÓN A CABLE A TIERRA", "INSTALACION DE ATERRIZAJES"]):
+        # Verificar primero si hay un kit de puesta a tierra instalado en este nodo
+        tiene_kit_spt = False
+        for material_key, nodos_qty in materiales_instalados.items():
+            material_name = material_key.split("|")[1].upper()
+            if "KIT DE PUESTA A TIERRA" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                tiene_kit_spt = True
+                break
+        
+        # Si hay un kit SPT instalado, no cobrar la conexión a tierra
+        if tiene_kit_spt:
+            return 0, [], []
+        
+        # Si no hay kit SPT, proceder con la conexión a tierra normal
+        kit_keywords = ["CONECT PERF", "CONECTOR BIME", "ALAMBRE", "VARILLA", "TIERRA", "CONECTOR VARILLA"]
         for material_key, nodos_qty in materiales_instalados.items():
             material_name = material_key.split("|")[1].upper()
             if any(kw in material_name for kw in kit_keywords) and nodo in nodos_qty:
                 qty = nodos_qty[nodo]
-                if "KIT" in material_name or "VARILLA" in material_name:  # Solo contar el kit principal una vez
+                if "VARILLA" in material_name:  # Solo contar la varilla principal una vez
                     cantidad_mo += qty
+                materiales_inst.append(material_name)
+    
+    # 3.1 Mano de obra para instalación de kit SPT
+    elif "INSTALACION KIT SPT" in descripcion_upper:
+        kit_keywords = ["KIT DE PUESTA A TIERRA", "VARILLA"]
+        for material_key, nodos_qty in materiales_instalados.items():
+            material_name = material_key.split("|")[1].upper()
+            if any(kw in material_name for kw in kit_keywords) and nodo in nodos_qty:
+                qty = nodos_qty[nodo]
+                cantidad_mo += qty
                 materiales_inst.append(material_name)
     
     # 4. Mano de obra para desmontaje (diferente al unificado)
@@ -1478,20 +1514,31 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     elif "TRANSPORTE" in descripcion_upper or "TRANSP." in descripcion_upper:
         # Determinar qué tipo de elemento se está transportando
         if "LUMINARIAS" in descripcion_upper or "PROYECTORES" in descripcion_upper:
-            # Contar luminarias instaladas y retiradas
-            for material_key, nodos_qty in materiales_instalados.items():
-                material_name = material_key.split("|")[1].upper()
-                if any(kw in material_name for kw in ["LUMINARIA", "LED", "CODIGO LUMINARIA"]) and nodo in nodos_qty:
-                    qty = nodos_qty[nodo]
-                    cantidad_mo += qty
-                    materiales_inst.append(material_name)
+            # Verificar si el transporte es con canasta o escalera
+            usar_canasta = "CANASTA" in descripcion_upper
+            usar_escalera = "ESCALERA" in descripcion_upper
             
-            for material_key, nodos_qty in materiales_retirados.items():
-                material_name = material_key.split("|")[1].upper()
-                if any(kw in material_name for kw in ["LUMINARIA", "BOMBILLA"]) and nodo in nodos_qty:
-                    qty = nodos_qty[nodo]
-                    cantidad_mo += qty
-                    materiales_ret.append(material_name)
+            # Si la descripción no especifica el método, verificar el tipo de material
+            if not (usar_canasta or usar_escalera):
+                # Por defecto, asumimos que las luminarias y bombillas requieren canasta
+                usar_canasta = True
+            
+            # Solo contar si el método de transporte coincide con el tipo de material
+            if usar_canasta:
+                # Contar luminarias instaladas y retiradas
+                for material_key, nodos_qty in materiales_instalados.items():
+                    material_name = material_key.split("|")[1].upper()
+                    if any(kw in material_name for kw in ["LUMINARIA", "LED", "CODIGO LUMINARIA"]) and nodo in nodos_qty:
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_inst.append(material_name)
+                
+                for material_key, nodos_qty in materiales_retirados.items():
+                    material_name = material_key.split("|")[1].upper()
+                    if any(kw in material_name for kw in ["LUMINARIA", "BOMBILLA"]) and nodo in nodos_qty:
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_ret.append(material_name)
         
         elif "POSTE" in descripcion_upper:
             # Contar postes instalados y retirados
@@ -1889,7 +1936,6 @@ def agregar_hoja_asociaciones(writer, datos_combinados):
     for col_idx in range(1, 8):
         ws.column_dimensions[get_column_letter(col_idx)].width = 30
         
-
 def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_combinados):
     output = BytesIO()
     
@@ -2007,38 +2053,38 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                 
                 # ===== OBSERVACIONES POR NODO =====
                 # Creamos un diccionario para almacenar todas las observaciones por nodo
-                observaciones_por_nodo = {nodo: [] for nodo in nodos_ordenados}
-                
-                # Recopilamos todas las observaciones de materiales y retirados
-                for mat_key in info['aspectos_materiales']:
-                    for nodo, aspectos in info['aspectos_materiales'][mat_key].items():
-                        if nodo in observaciones_por_nodo:
-                            observaciones_por_nodo[nodo].extend(aspectos)
-                
-                for mat_key in info['aspectos_retirados']:
-                    for nodo, aspectos in info['aspectos_retirados'][mat_key].items():
-                        if nodo in observaciones_por_nodo:
-                            observaciones_por_nodo[nodo].extend(aspectos)
+                #observaciones_por_nodo = {nodo: [] for nodo in nodos_ordenados}
+                #
+                ## Recopilamos todas las observaciones de materiales y retirados
+                #for mat_key in info['aspectos_materiales']:
+                #    for nodo, aspectos in info['aspectos_materiales'][mat_key].items():
+                #        if nodo in observaciones_por_nodo:
+                #            observaciones_por_nodo[nodo].extend(aspectos)
+                #
+                #for mat_key in info['aspectos_retirados']:
+                #    for nodo, aspectos in info['aspectos_retirados'][mat_key].items():
+                #        if nodo in observaciones_por_nodo:
+                #            observaciones_por_nodo[nodo].extend(aspectos)
                 
                 # Eliminamos duplicados y ordenamos
-                for nodo in observaciones_por_nodo:
-                    observaciones_por_nodo[nodo] = sorted(set(observaciones_por_nodo[nodo]))
+                #for nodo in observaciones_por_nodo:
+                #    observaciones_por_nodo[nodo] = sorted(set(observaciones_por_nodo[nodo]))
                 
                 # Agregamos una fila para observaciones al final de los materiales
-                filas.append(['OBSERVACIONES POR NODO', '', '', ''] + [''] * num_nodos)
-                
-                # Crear una única fila para todas las observaciones, organizadas por columna de nodo
-                fila_obs = ['Observaciones', 'Obs', '', ''] + [''] * num_nodos
-                
-                # Para cada nodo, formatear sus observaciones y colocarlas en la columna correspondiente
-                for i, nodo in enumerate(nodos_ordenados):
-                    if observaciones_por_nodo[nodo]:
-                        texto_obs = '\n'.join([f"{j+1}. {obs}" for j, obs in enumerate(observaciones_por_nodo[nodo])])
-                        fila_obs[4 + i] = texto_obs
-                
-                # Solo agregar la fila si hay al menos una observación
-                if any(observaciones_por_nodo.values()):
-                    filas.append(fila_obs)
+                #filas.append(['OBSERVACIONES POR NODO', '', '', ''] + [''] * num_nodos)
+                #
+                ## Crear una única fila para todas las observaciones, organizadas por columna de nodo
+                #fila_obs = ['Observaciones', 'Obs', '', ''] + [''] * num_nodos
+                #
+                ## Para cada nodo, formatear sus observaciones y colocarlas en la columna correspondiente
+                #for i, nodo in enumerate(nodos_ordenados):
+                #    if observaciones_por_nodo[nodo]:
+                #        texto_obs = '\n'.join([f"{j+1}. {obs}" for j, obs in enumerate(observaciones_por_nodo[nodo])])
+                #        fila_obs[4 + i] = texto_obs
+                #
+                ## Solo agregar la fila si hay al menos una observación
+                #if any(observaciones_por_nodo.values()):
+                #    filas.append(fila_obs)
                 
                 # ===== OBSERVACIONES COMPLETAS =====
                 filas.append(['OBSERVACIONES COMPLETAS', '', '', ''] + [''] * num_nodos)
@@ -2277,9 +2323,10 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                                 
                                 if partida_nodo:
                                     # Formatear el contenido: cantidad + materiales
-                                    contenido = f"Cantidad: {partida_nodo['cantidad']}"
-                                    if partida_nodo['materiales']:
-                                        contenido += f"\n\nMateriales:\n{partida_nodo['materiales']}"
+                                    #contenido = f"Cantidad: {partida_nodo['cantidad']}"
+                                    contenido = f"{partida_nodo['cantidad']}"
+                                    #if partida_nodo['materiales']:
+                                    #    contenido += f"\n\nMateriales:\n{partida_nodo['materiales']}"
                                     
                                     fila_mo[4 + i] = contenido
                             
@@ -2360,7 +2407,6 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
 
     output.seek(0)
     return output
-
 
 @app.post("/upload/")
 async def subir_archivos(
