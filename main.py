@@ -864,7 +864,6 @@ def tabla_mano_obra():
         logger.error(f"Error cargando plantilla: {str(e)}")
         return []
 
-
 def plantilla_mano_obra(worksheet, df, plantilla):
     header_font = Font(bold=True)
     cell_border = Border(
@@ -901,7 +900,7 @@ def plantilla_mano_obra(worksheet, df, plantilla):
 
 def agregar_tabla_mano_obra(sheet, df, plantilla):
     """
-    Agrega la tabla de mano de obra a la hoja de Excel.
+    Agrega la tabla de mano de obra a la hoja de Excel, organizando por columnas de nodo.
     
     Args:
         sheet: Hoja de Excel activa
@@ -911,16 +910,12 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
     # Obtener la OT de la primera fila
     ot = df.iloc[0, 0]
     
-    # Obtener información de materiales y postes
-    materiales_instalados = {}
-    materiales_retirados = {}
-    nodos = []
-    
     # Extraer los nombres de las columnas que contienen "Nodo_"
     nodo_cols = [col for col in df.columns if col.startswith("Nodo_")]
     
     # Extraer los nodos de la segunda fila (Nodos postes)
     postes_row = df.iloc[1]
+    nodos = []
     for i, col in enumerate(nodo_cols):
         if pd.notna(postes_row[col]) and postes_row[col]:
             nodo = f"{postes_row[col]}_{i+1}"  # Formato: poste_índice
@@ -934,7 +929,10 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
         # Si no se puede ordenar numéricamente, mantener el orden original
         pass
     
-    # Procesar materiales instalados
+    # Procesar materiales instalados y retirados
+    materiales_instalados = {}
+    materiales_retirados = {}
+    
     in_materiales = False
     in_retirados = False
     
@@ -975,20 +973,9 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
     
     # Agregar cabecera de la tabla de mano de obra
     sheet.cell(row=last_row, column=1, value="TABLA DE MANO DE OBRA").font = Font(bold=True, size=14)
-    sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
+    sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=len(df.columns))
     sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
     last_row += 2
-    
-    # Encabezados de la tabla
-    headers = ["DESCRIPCIÓN MANO DE OBRA", "UNIDAD", "CANTIDAD", "NODO", "MATERIALES ASOCIADOS"]
-    for i, header in enumerate(headers, 1):
-        sheet.cell(row=last_row, column=i, value=header).font = Font(bold=True)
-        sheet.cell(row=last_row, column=i).fill = PatternFill("solid", fgColor="DDDDDD")
-        sheet.cell(row=last_row, column=i).border = Border(
-            left=Side(style='thin'), right=Side(style='thin'),
-            top=Side(style='thin'), bottom=Side(style='thin')
-        )
-    last_row += 1
     
     # Agrupar partidas por bloques para mejor visualización
     bloques = [
@@ -1033,27 +1020,13 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
     plantilla_original = plantilla
     plantilla = partidas_unificadas
     
-    # Para cada nodo, mostrar todos los bloques de mano de obra en una mejor organización
+    # Crear un diccionario para almacenar la mano de obra por nodo
+    mano_obra_por_nodo = {nodo: {} for nodo in nodos}
+    
+    # Para cada nodo, calcular la mano de obra necesaria
     for nodo in nodos:
-        # Obtener poste ID para mostrar
-        poste_id = nodo.split('_')[0]
-        
-        # Insertar encabezado de nodo con mejor diseño
-        sheet.cell(row=last_row, column=1, value=f"NODO: {poste_id}").font = Font(bold=True, size=12)
-        sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
-        sheet.cell(row=last_row, column=1).fill = PatternFill("solid", fgColor="3366FF")  # Azul
-        sheet.cell(row=last_row, column=1).font = Font(bold=True, color="FFFFFF")  # Texto blanco
-        sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
-        last_row += 1
-        
-        # Contador para comprobar si hay alguna partida para este nodo
-        partidas_nodo_count = 0
-        
         # Para cada bloque de partidas
         for titulo_bloque, keywords_mo, keywords_mat in bloques:
-            # Variables para rastrear si ya hemos añadido el título del bloque
-            bloque_agregado = False
-            
             # Filtrar partidas del bloque actual
             partidas_filtradas = [
                 item for item in plantilla
@@ -1064,15 +1037,6 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
             for partida in partidas_filtradas:
                 descripcion = partida['DESCRIPCION MANO DE OBRA']
                 unidad = partida['UNIDAD']
-                
-                # Determinar si se trata de una partida específica para cierto tipo de poste
-                tipo_poste = None
-                if "METALICO" in descripcion.upper() or "METÁLICO" in descripcion.upper():
-                    tipo_poste = "METALICO"
-                elif "FIBRA" in descripcion.upper():
-                    tipo_poste = "FIBRA"
-                elif "CONCRETO" in descripcion.upper() or "HORMIGÓN" in descripcion.upper():
-                    tipo_poste = "CONCRETO"
                 
                 # Caso especial para desmontaje de luminarias unificado
                 cantidad_mo = 0
@@ -1104,93 +1068,168 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
                         nodo
                     )
                 
-                # Solo agregar filas para partidas con cantidad > 0 
+                # Solo agregar partidas con cantidad > 0
                 if cantidad_mo > 0:
-                    # Agregar título del bloque si aún no se ha hecho y hay partidas
-                    if not bloque_agregado:
-                        sheet.cell(row=last_row, column=1, value=titulo_bloque).font = Font(bold=True)
-                        sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
-                        sheet.cell(row=last_row, column=1).fill = PatternFill("solid", fgColor="AAAAAA")
-                        sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
-                        last_row += 1
-                        bloque_agregado = True
+                    # Si este bloque no existe en el diccionario del nodo, crearlo
+                    if titulo_bloque not in mano_obra_por_nodo[nodo]:
+                        mano_obra_por_nodo[nodo][titulo_bloque] = []
                     
-                    partidas_nodo_count += 1
-                    
-                    # Descripción de la mano de obra
-                    sheet.cell(row=last_row, column=1, value=descripcion).border = Border(
-                        left=Side(style='thin'), right=Side(style='thin'),
-                        top=Side(style='thin'), bottom=Side(style='thin')
-                    )
-                    
-                    # Unidad
-                    sheet.cell(row=last_row, column=2, value=unidad).border = Border(
-                        left=Side(style='thin'), right=Side(style='thin'),
-                        top=Side(style='thin'), bottom=Side(style='thin')
-                    )
-                    sheet.cell(row=last_row, column=2).alignment = Alignment(horizontal='center')
-                    
-                    # Cantidad
-                    sheet.cell(row=last_row, column=3, value=cantidad_mo).border = Border(
-                        left=Side(style='thin'), right=Side(style='thin'),
-                        top=Side(style='thin'), bottom=Side(style='thin')
-                    )
-                    sheet.cell(row=last_row, column=3).alignment = Alignment(horizontal='center')
-                    
-                    # Nodo
-                    # Extraer el número de poste del nodo
-                    poste = nodo.split('_')[0]
-                    sheet.cell(row=last_row, column=4, value=poste).border = Border(
-                        left=Side(style='thin'), right=Side(style='thin'),
-                        top=Side(style='thin'), bottom=Side(style='thin')
-                    )
-                    sheet.cell(row=last_row, column=4).alignment = Alignment(horizontal='center')
-                    
-                    # Materiales asociados
+                    # Formatear materiales asociados
                     materiales_texto = []
                     if materiales_inst:
                         materiales_texto.append("INST: " + ", ".join(materiales_inst))
                     if materiales_ret:
                         materiales_texto.append("RET: " + ", ".join(materiales_ret))
                     
-                    sheet.cell(row=last_row, column=5, value="\n".join(materiales_texto)).border = Border(
-                        left=Side(style='thin'), right=Side(style='thin'),
-                        top=Side(style='thin'), bottom=Side(style='thin')
-                    )
-                    sheet.cell(row=last_row, column=5).alignment = Alignment(vertical='top', wrap_text=True)
-                    
-                    last_row += 1
-            
-            # Solo añadir espacio si se agregó alguna partida en este bloque
-            if bloque_agregado:
-                last_row += 1
-        
-        # Si no hay partidas para este nodo, mostrar mensaje indicativo
-        if partidas_nodo_count == 0:
-            sheet.cell(row=last_row, column=1, value="No hay partidas de mano de obra asociadas a este nodo").border = Border(
-                left=Side(style='thin'), right=Side(style='thin'),
-                top=Side(style='thin'), bottom=Side(style='thin')
-            )
-            sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
+                    # Agregar la partida al bloque correspondiente
+                    mano_obra_por_nodo[nodo][titulo_bloque].append({
+                        'descripcion': descripcion,
+                        'unidad': unidad,
+                        'cantidad': cantidad_mo,
+                        'materiales': "\n".join(materiales_texto)
+                    })
+    
+    # Ahora, crear la tabla de mano de obra organizada por bloques
+    for titulo_bloque, keywords_mo, _ in bloques:
+        # Verificar si algún nodo tiene partidas para este bloque
+        if any(titulo_bloque in mano_obra_por_nodo[nodo] for nodo in nodos):
+            # Encabezado del bloque
+            sheet.cell(row=last_row, column=1, value=titulo_bloque).font = Font(bold=True)
+            sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=len(df.columns))
+            sheet.cell(row=last_row, column=1).fill = PatternFill("solid", fgColor="AAAAAA")
             sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
             last_row += 1
-        
-        # Espacio después de cada nodo para mejor visualización
-        last_row += 2
+            
+            # Encabezados de columnas
+            headers = ["DESCRIPCIÓN MANO DE OBRA", "UNIDAD", "CANTIDAD TOTAL"]
+            for i, header in enumerate(headers, 1):
+                cell = sheet.cell(row=last_row, column=i, value=header)
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill("solid", fgColor="DDDDDD")
+                cell.border = Border(
+                    left=Side(style='thin'), right=Side(style='thin'),
+                    top=Side(style='thin'), bottom=Side(style='thin')
+                )
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+            
+            # Agregar encabezados para cada nodo
+            for i, nodo in enumerate(nodos):
+                poste = nodo.split('_')[0]
+                cell = sheet.cell(row=last_row, column=i+4, value=f"NODO {poste}")
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill("solid", fgColor="DDDDDD")
+                cell.border = Border(
+                    left=Side(style='thin'), right=Side(style='thin'),
+                    top=Side(style='thin'), bottom=Side(style='thin')
+                )
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+            
+            last_row += 1
+            
+            # Recopilar todas las descripciones únicas de mano de obra para este bloque
+            descripciones_unicas = set()
+            for nodo in nodos:
+                if titulo_bloque in mano_obra_por_nodo[nodo]:
+                    for partida in mano_obra_por_nodo[nodo][titulo_bloque]:
+                        descripciones_unicas.add(partida['descripcion'])
+            
+            # Para cada descripción única, crear una fila
+            for descripcion in sorted(descripciones_unicas):
+                # Encontrar la unidad (debería ser la misma para la misma descripción)
+                unidad = next((
+                    partida['unidad'] 
+                    for nodo in nodos 
+                    if titulo_bloque in mano_obra_por_nodo[nodo] 
+                    for partida in mano_obra_por_nodo[nodo][titulo_bloque] 
+                    if partida['descripcion'] == descripcion
+                ), "UND")
+                
+                # Calcular la cantidad total sumando de todos los nodos
+                cantidad_total = sum(
+                    partida['cantidad']
+                    for nodo in nodos
+                    if titulo_bloque in mano_obra_por_nodo[nodo]
+                    for partida in mano_obra_por_nodo[nodo][titulo_bloque]
+                    if partida['descripcion'] == descripcion
+                )
+                
+                # Escribir la descripción, unidad y cantidad total
+                sheet.cell(row=last_row, column=1, value=descripcion).border = Border(
+                    left=Side(style='thin'), right=Side(style='thin'),
+                    top=Side(style='thin'), bottom=Side(style='thin')
+                )
+                
+                sheet.cell(row=last_row, column=2, value=unidad).border = Border(
+                    left=Side(style='thin'), right=Side(style='thin'),
+                    top=Side(style='thin'), bottom=Side(style='thin')
+                )
+                sheet.cell(row=last_row, column=2).alignment = Alignment(horizontal='center')
+                
+                sheet.cell(row=last_row, column=3, value=cantidad_total).border = Border(
+                    left=Side(style='thin'), right=Side(style='thin'),
+                    top=Side(style='thin'), bottom=Side(style='thin')
+                )
+                sheet.cell(row=last_row, column=3).alignment = Alignment(horizontal='center')
+                
+                # Para cada nodo, escribir la cantidad y materiales asociados
+                for i, nodo in enumerate(nodos):
+                    # Buscar la partida para este nodo y descripción
+                    partida_nodo = next((
+                        partida
+                        for partida in mano_obra_por_nodo[nodo].get(titulo_bloque, [])
+                        if partida['descripcion'] == descripcion
+                    ), None)
+                    
+                    if partida_nodo:
+                        # Formatear el contenido: cantidad + materiales
+                        contenido = f"Cantidad: {partida_nodo['cantidad']}"
+                        if partida_nodo['materiales']:
+                            contenido += f"\n\nMateriales:\n{partida_nodo['materiales']}"
+                        
+                        cell = sheet.cell(row=last_row, column=i+4, value=contenido)
+                        cell.border = Border(
+                            left=Side(style='thin'), right=Side(style='thin'),
+                            top=Side(style='thin'), bottom=Side(style='thin')
+                        )
+                        cell.alignment = Alignment(vertical='top', wrap_text=True)
+                    else:
+                        # Si no hay partida para este nodo, dejar la celda vacía pero con borde
+                        cell = sheet.cell(row=last_row, column=i+4, value="")
+                        cell.border = Border(
+                            left=Side(style='thin'), right=Side(style='thin'),
+                            top=Side(style='thin'), bottom=Side(style='thin')
+                        )
+                
+                # Ajustar altura de la fila según el contenido
+                max_lines = 1
+                for i, nodo in enumerate(nodos):
+                    cell = sheet.cell(row=last_row, column=i+4)
+                    if cell.value and isinstance(cell.value, str):
+                        lines = cell.value.count('\n') + 1
+                        max_lines = max(max_lines, lines)
+                
+                sheet.row_dimensions[last_row].height = max(15 * max_lines + 5, 20)
+                
+                last_row += 1
+            
+            # Espacio después de cada bloque
+            last_row += 1
     
-    # Resumen general de mano de obra (agregar después de mostrar por nodos)
+    # Agregar resumen general de mano de obra
     sheet.cell(row=last_row, column=1, value="RESUMEN GENERAL DE MANO DE OBRA").font = Font(bold=True, size=14)
-    sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
+    sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=len(df.columns))
     sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
     sheet.cell(row=last_row, column=1).fill = PatternFill("solid", fgColor="009900")  # Verde
     sheet.cell(row=last_row, column=1).font = Font(bold=True, color="FFFFFF")  # Texto blanco
     last_row += 2
     
     # Encabezados para el resumen
-    for i, header in enumerate(["DESCRIPCIÓN MANO DE OBRA", "UNIDAD", "CANTIDAD TOTAL", "", ""], 1):
-        sheet.cell(row=last_row, column=i, value=header).font = Font(bold=True)
-        sheet.cell(row=last_row, column=i).fill = PatternFill("solid", fgColor="DDDDDD")
-        sheet.cell(row=last_row, column=i).border = Border(
+    headers = ["DESCRIPCIÓN MANO DE OBRA", "UNIDAD", "CANTIDAD TOTAL"]
+    for i, header in enumerate(headers, 1):
+        cell = sheet.cell(row=last_row, column=i, value=header)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="DDDDDD")
+        cell.border = Border(
             left=Side(style='thin'), right=Side(style='thin'),
             top=Side(style='thin'), bottom=Side(style='thin')
         )
@@ -1252,7 +1291,7 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
     for titulo_bloque, keywords_mo, _ in bloques:
         # Insertar título del bloque
         sheet.cell(row=last_row, column=1, value=titulo_bloque).font = Font(bold=True)
-        sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
+        sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=3)
         sheet.cell(row=last_row, column=1).fill = PatternFill("solid", fgColor="AAAAAA")
         sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
         last_row += 1
@@ -1292,7 +1331,7 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
         last_row += 1
     
     # Ajustar ancho de columnas para mejor visualización
-    for col in range(1, 6):
+    for col in range(1, len(df.columns) + 1):
         col_letter = get_column_letter(col)
         max_length = 0
         for row in range(1, sheet.max_row + 1):
@@ -1305,12 +1344,6 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
         # Ajustar el ancho con un pequeño margen adicional
         adjusted_width = max_length + 2
         sheet.column_dimensions[col_letter].width = min(adjusted_width, 50)  # Máximo 50 para evitar columnas demasiado anchas
-
-    # Agregar pie de página
-    last_row += 2
-    #sheet.cell(row=last_row, column=1, value=f"OT: {ot} - Generado automáticamente").font = Font(italic=True)
-    sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
-    sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
           
 def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_retirados, nodo):
     """
@@ -1856,6 +1889,7 @@ def agregar_hoja_asociaciones(writer, datos_combinados):
     for col_idx in range(1, 8):
         ws.column_dimensions[get_column_letter(col_idx)].width = 30
         
+
 def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_combinados):
     output = BytesIO()
     
@@ -1903,7 +1937,6 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                     fechas_fila.append(fecha)
                 filas.append(fechas_fila)
                 
-                # ===== PROCESAR CÓDIGOS N1 Y N2 =====
                 # ===== PROCESAR CÓDIGOS N1 Y N2 =====
                 def agregar_codigos(tipo_codigo, codigos_data):
                     # Diccionario para agrupar códigos por clave (potencia)
@@ -1994,92 +2027,264 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                 # Agregamos una fila para observaciones al final de los materiales
                 filas.append(['OBSERVACIONES POR NODO', '', '', ''] + [''] * num_nodos)
                 
-                # Para cada nodo que tenga observaciones, agregamos una fila
-                for nodo in nodos_ordenados:
-                    if observaciones_por_nodo[nodo]:
-                        poste = nodo.split('_')[0]
-                        texto_obs = '\n'.join([f"{i+1}. {obs}" for i, obs in enumerate(observaciones_por_nodo[nodo])])
-                        fecha = info['fechas_sync'].get(nodo, "Sin fecha")
-                        
-                        # Creamos una fila con observaciones solo para este nodo
-                        fila = [f"Obs. {poste}", 'Obs', '', fecha] + [''] * num_nodos
-                        # Colocamos las observaciones en la columna correcta
-                        nodo_idx = nodos_ordenados.index(nodo)
-                        fila[4 + nodo_idx] = texto_obs
-                        filas.append(fila)
+                # Crear una única fila para todas las observaciones, organizadas por columna de nodo
+                fila_obs = ['Observaciones', 'Obs', '', ''] + [''] * num_nodos
                 
-                # ===== GARANTIZAR COBERTURA TOTAL DE NODOS =====
+                # Para cada nodo, formatear sus observaciones y colocarlas en la columna correspondiente
+                for i, nodo in enumerate(nodos_ordenados):
+                    if observaciones_por_nodo[nodo]:
+                        texto_obs = '\n'.join([f"{j+1}. {obs}" for j, obs in enumerate(observaciones_por_nodo[nodo])])
+                        fila_obs[4 + i] = texto_obs
+                
+                # Solo agregar la fila si hay al menos una observación
+                if any(observaciones_por_nodo.values()):
+                    filas.append(fila_obs)
+                
+                # ===== OBSERVACIONES COMPLETAS =====
                 filas.append(['OBSERVACIONES COMPLETAS', '', '', ''] + [''] * num_nodos)
-
-                # Diccionario para trackear nodos procesados
-                observaciones_ordenadas = []
-
-                # Recorrer nodos en ORDEN CRONOLÓGICO ORIGINAL
+                
+                # Organizar observaciones por nodo para la sección "OBSERVACIONES COMPLETAS"
+                observaciones_completas = {nodo: [] for nodo in nodos_ordenados}
+                
+                # Recopilar todas las observaciones con sus códigos y fechas
                 for nodo in nodos_ordenados:
                     poste = nodo.split('_')[0]
-
-                    # 1. Obtener códigos asociados
+                    fecha = info['fechas_sync'].get(nodo, "Sin fecha")
+                    
+                    # Obtener códigos asociados
                     codigos = set()
                     for key in info['codigos_n1']:
                         codigos.update(info['codigos_n1'][key].get(nodo, set()))
                     for key in info['codigos_n2']:
                         codigos.update(info['codigos_n2'][key].get(nodo, set()))
-
+                    
                     if not codigos:
                         codigos.add("Sin código")
-
-                    # 2. Obtener observaciones
+                    
+                    # Obtener observaciones
                     aspectos = []
                     for mat_key in info['aspectos_materiales']:
                         aspectos.extend(info['aspectos_materiales'][mat_key].get(nodo, []))
                     for mat_key in info['aspectos_retirados']:
                         aspectos.extend(info['aspectos_retirados'][mat_key].get(nodo, []))
-
+                    
                     if not aspectos:
                         aspectos.append("Sin observaciones")
-
-                    # 3. Registrar todas las entradas
+                    
+                    # Formatear y agregar a las observaciones completas
                     for codigo in sorted(codigos):
-                        texto_obs = '\n'.join([f"{i+1}. {obs}" for i, obs in enumerate(aspectos)])
-                        fecha = info['fechas_sync'].get(nodo, "Sin fecha")
-                        observaciones_ordenadas.append({
-                            'orden': len(observaciones_ordenadas) + 1,
-                            'clave': f"{poste} - {codigo}",
-                            'observaciones': texto_obs,
-                            'nodo': nodo,
-                            'fecha': fecha  # Guardar la fecha para ordenar y mostrar
-                        })
-
-                # 4. Agregar nodos faltantes
-                nodos_procesados = {obs['nodo'] for obs in observaciones_ordenadas}
+                        entrada = f"Código: {codigo}\n"
+                        entrada += '\n'.join([f"{i+1}. {obs}" for i, obs in enumerate(aspectos)])
+                        # Agregar la fecha al final de la entrada
+                        entrada += f"\n(Fecha: {fecha})"
+                        observaciones_completas[nodo].append(entrada)
+                
+                # Crear una única fila para todas las observaciones completas
+                fila_obs_completas = ['Observaciones Completas', 'Obs', '', ''] + [''] * num_nodos
+                
+                # Para cada nodo, formatear sus observaciones completas y colocarlas en la columna correspondiente
+                for i, nodo in enumerate(nodos_ordenados):
+                    if observaciones_completas[nodo]:
+                        # Separar cada entrada con una línea en blanco
+                        texto_obs = '\n\n'.join(observaciones_completas[nodo])
+                        fila_obs_completas[4 + i] = texto_obs
+                
+                # Agregar la fila de observaciones completas
+                filas.append(fila_obs_completas)
+                
+                # ===== MANO DE OBRA POR NODO =====
+                # Agregar encabezado para la mano de obra
+                filas.append(['MANO DE OBRA POR NODO', '', '', ''] + [''] * num_nodos)
+                
+                # Procesar materiales instalados y retirados para calcular la mano de obra
+                materiales_instalados = {}
+                materiales_retirados = {}
+                
+                # Extraer materiales instalados
+                for material_key, nodos_qty in info['materiales'].items():
+                    materiales_instalados[material_key] = {}
+                    for nodo, qty in nodos_qty.items():
+                        if nodo in nodos_ordenados and qty > 0:
+                            materiales_instalados[material_key][nodo] = float(qty)
+                
+                # Extraer materiales retirados
+                for material_key, nodos_qty in info.get('materiales_retirados', {}).items():
+                    materiales_retirados[material_key] = {}
+                    for nodo, qty in nodos_qty.items():
+                        if nodo in nodos_ordenados and qty > 0:
+                            materiales_retirados[material_key][nodo] = float(qty)
+                
+                # Cargar la plantilla de mano de obra
+                plantilla = cargar_plantilla_mano_obra()
+                
+                # Agrupar partidas por bloques para mejor visualización
+                bloques = [
+                    ("Postes",
+                     ["APERTURA", "APLOMADA", "CONCRETADA", "HINCADA"],
+                     ["POSTE"]),
+                    ("Instalación luminarias",
+                     ["INSTALACION LUMINARIAS"],
+                     ["LUMINARIA", "FOTOCELDA", "GRILLETE", "BRAZO"]),
+                    ("Conexión a tierra",
+                     ["CONEXIÓN A CABLE A TIERRA", "INSTALACION KIT SPT"],
+                     ["KIT DE PUESTA A TIERRA", "CONECT PERF", "CONECTOR BIME/COM", "ALAMBRE", "TUERCA", "TORNILLO"]),
+                    ("Desmontaje / Transporte",
+                     ["DESMONTAJE", "TRANSPORTE"],
+                     ["ALAMBRE", "BRAZO", "CÓDIGO", "CABLE"])
+                ]
+                
+                # Pre-procesamiento para unificar los tipos de desmontaje de luminarias
+                partidas_unificadas = []
+                tipo_desmontaje_luminarias = []
+                
+                for partida in plantilla:
+                    descripcion = partida['DESCRIPCION MANO DE OBRA']
+                    # Verificar si es una partida de desmontaje de luminarias
+                    if ("DESMONTAJE" in descripcion.upper() and "LUMINARIA" in descripcion.upper() and 
+                        ("CAMIONETA" in descripcion.upper() or "CANASTA" in descripcion.upper())):
+                        # Guardar la descripción original para referencia
+                        tipo_desmontaje_luminarias.append(descripcion)
+                        # No agregar esta partida a la lista unificada aún
+                    else:
+                        partidas_unificadas.append(partida)
+                
+                # Si hay partidas de desmontaje de luminarias, crear una partida unificada
+                if tipo_desmontaje_luminarias:
+                    partida_unificada = {
+                        'DESCRIPCION MANO DE OBRA': "DESMONTAJE DE LUMINARIAS UNIFICADO",
+                        'UNIDAD': next((p['UNIDAD'] for p in plantilla if p['DESCRIPCION MANO DE OBRA'] in tipo_desmontaje_luminarias), "UN")
+                    }
+                    partidas_unificadas.append(partida_unificada)
+                
+                # Reemplazar la plantilla original con la unificada
+                plantilla_original = plantilla
+                plantilla = partidas_unificadas
+                
+                # Crear un diccionario para almacenar la mano de obra por nodo
+                mano_obra_por_nodo = {nodo: {} for nodo in nodos_ordenados}
+                
+                # Para cada nodo, calcular la mano de obra necesaria
                 for nodo in nodos_ordenados:
-                    if nodo not in nodos_procesados:
-                        poste = nodo.split('_')[0]
-                        fecha = info['fechas_sync'].get(nodo, "Sin fecha")
-                        observaciones_ordenadas.append({
-                            'orden': len(observaciones_ordenadas) + 1,
-                            'clave': f"{poste} - Sin código",
-                            'observaciones': "1. Sin observaciones",
-                            'nodo': nodo,
-                            'fecha': fecha
-                        })
-
-                # 5. Ordenar por fecha de sincronización (de menor a mayor)
-                observaciones_ordenadas_por_fecha = sorted(
-                    observaciones_ordenadas,
-                    key=lambda x: pd.to_datetime(x['fecha'], errors='coerce', format='%d/%m/%Y %H:%M:%S')
-                )
-
-                # 6. Agregar al Excel - SOLO para observaciones incluimos la fecha
-                for obs in observaciones_ordenadas_por_fecha:
-                    fila = [
-                        obs['clave'],
-                        'Obs',
-                        obs['observaciones'],
-                        obs['fecha'],  # Incluir la fecha SOLO para las observaciones
-                        *['' for _ in range(num_nodos)]
-                    ]
-                    filas.append(fila)
+                    # Para cada bloque de partidas
+                    for titulo_bloque, keywords_mo, keywords_mat in bloques:
+                        # Filtrar partidas del bloque actual
+                        partidas_filtradas = [
+                            item for item in plantilla
+                            if any(kw in item['DESCRIPCION MANO DE OBRA'].upper() for kw in keywords_mo)
+                        ]
+                        
+                        # Para cada partida, calcular la mano de obra necesaria para este nodo
+                        for partida in partidas_filtradas:
+                            descripcion = partida['DESCRIPCION MANO DE OBRA']
+                            unidad = partida['UNIDAD']
+                            
+                            # Caso especial para desmontaje de luminarias unificado
+                            cantidad_mo = 0
+                            materiales_inst = []
+                            materiales_ret = []
+                            
+                            if descripcion == "DESMONTAJE DE LUMINARIAS UNIFICADO":
+                                # Calcular la cantidad sumando todos los tipos de desmontaje
+                                for desc_original in tipo_desmontaje_luminarias:
+                                    cant_temp, mat_inst_temp, mat_ret_temp = calcular_cantidad_mano_obra(
+                                        desc_original,
+                                        materiales_instalados,
+                                        materiales_retirados,
+                                        nodo
+                                    )
+                                    cantidad_mo += cant_temp
+                                    materiales_inst.extend(mat_inst_temp)
+                                    materiales_ret.extend(mat_ret_temp)
+                                
+                                # Eliminar duplicados en las listas de materiales
+                                materiales_inst = list(set(materiales_inst))
+                                materiales_ret = list(set(materiales_ret))
+                            else:
+                                # Procesamiento normal para otras partidas
+                                cantidad_mo, materiales_inst, materiales_ret = calcular_cantidad_mano_obra(
+                                    descripcion,
+                                    materiales_instalados,
+                                    materiales_retirados,
+                                    nodo
+                                )
+                            
+                            # Solo agregar partidas con cantidad > 0
+                            if cantidad_mo > 0:
+                                # Si este bloque no existe en el diccionario del nodo, crearlo
+                                if titulo_bloque not in mano_obra_por_nodo[nodo]:
+                                    mano_obra_por_nodo[nodo][titulo_bloque] = []
+                                
+                                # Formatear materiales asociados
+                                materiales_texto = []
+                                if materiales_inst:
+                                    materiales_texto.append("INST: " + ", ".join(materiales_inst))
+                                if materiales_ret:
+                                    materiales_texto.append("RET: " + ", ".join(materiales_ret))
+                                
+                                # Agregar la partida al bloque correspondiente
+                                mano_obra_por_nodo[nodo][titulo_bloque].append({
+                                    'descripcion': descripcion,
+                                    'unidad': unidad,
+                                    'cantidad': cantidad_mo,
+                                    'materiales': "\n".join(materiales_texto)
+                                })
+                
+                # Crear filas para cada bloque de mano de obra
+                for titulo_bloque, _, _ in bloques:
+                    # Verificar si algún nodo tiene partidas para este bloque
+                    if any(titulo_bloque in mano_obra_por_nodo[nodo] for nodo in nodos_ordenados):
+                        # Agregar encabezado del bloque
+                        filas.append([f"BLOQUE: {titulo_bloque}", '', '', ''] + [''] * num_nodos)
+                        
+                        # Recopilar todas las descripciones únicas de mano de obra para este bloque
+                        descripciones_unicas = set()
+                        for nodo in nodos_ordenados:
+                            if titulo_bloque in mano_obra_por_nodo[nodo]:
+                                for partida in mano_obra_por_nodo[nodo][titulo_bloque]:
+                                    descripciones_unicas.add(partida['descripcion'])
+                        
+                        # Para cada descripción única, crear una fila
+                        for descripcion in sorted(descripciones_unicas):
+                            # Encontrar la unidad (debería ser la misma para la misma descripción)
+                            unidad = next((
+                                partida['unidad'] 
+                                for nodo in nodos_ordenados 
+                                if titulo_bloque in mano_obra_por_nodo[nodo] 
+                                for partida in mano_obra_por_nodo[nodo][titulo_bloque] 
+                                if partida['descripcion'] == descripcion
+                            ), "UND")
+                            
+                            # Calcular la cantidad total sumando de todos los nodos
+                            cantidad_total = sum(
+                                partida['cantidad']
+                                for nodo in nodos_ordenados
+                                if titulo_bloque in mano_obra_por_nodo[nodo]
+                                for partida in mano_obra_por_nodo[nodo][titulo_bloque]
+                                if partida['descripcion'] == descripcion
+                            )
+                            
+                            # Crear la fila con la descripción, unidad y cantidad total
+                            fila_mo = [descripcion, unidad, cantidad_total, ''] + [''] * num_nodos
+                            
+                            # Para cada nodo, agregar la información de mano de obra
+                            for i, nodo in enumerate(nodos_ordenados):
+                                # Buscar la partida para este nodo y descripción
+                                partida_nodo = next((
+                                    partida
+                                    for partida in mano_obra_por_nodo[nodo].get(titulo_bloque, [])
+                                    if partida['descripcion'] == descripcion
+                                ), None)
+                                
+                                if partida_nodo:
+                                    # Formatear el contenido: cantidad + materiales
+                                    contenido = f"Cantidad: {partida_nodo['cantidad']}"
+                                    if partida_nodo['materiales']:
+                                        contenido += f"\n\nMateriales:\n{partida_nodo['materiales']}"
+                                    
+                                    fila_mo[4 + i] = contenido
+                            
+                            # Agregar la fila a la lista de filas
+                            filas.append(fila_mo)
                 
                 # Crear DataFrame a partir de los datos recopilados
                 df = pd.DataFrame(filas, columns=columnas)
@@ -2091,16 +2296,19 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                 # Obtener la plantilla para la mano de obra
                 plantilla = cargar_plantilla_mano_obra()
                 plantiall2 = tabla_mano_obra()
-                # Agregar la tabla de mano de obra en la hoja
+                # Agregar la tabla de mano de obra en la hoja (ahora solo como referencia, ya que la mostramos en línea)
                 plantilla_mano_obra(sheet, df, plantiall2)
-                agregar_tabla_mano_obra(sheet, df, plantilla)                           
+                # Ya no necesitamos llamar a agregar_tabla_mano_obra aquí, ya que la mano de obra se muestra en línea
+                # agregar_tabla_mano_obra(sheet, df, plantilla)                           
                   
                 # Cargar el archivo con openpyxl para combinar celdas
                 ws = writer.sheets[f"OT_{ot}"]
 
-                # Combinar celdas para "MATERIALES INSTALADOS" y "MATERIALES RETIRADOS"
+                # Combinar celdas para encabezados de secciones
                 for row in ws.iter_rows(min_row=2, max_row=ws.max_row):  # Comienza desde la segunda fila
-                    if row[0].value in ["MATERIALES INSTALADOS", "MATERIALES RETIRADOS", "OBSERVACIONES POR NODO"]:
+                    if row[0].value in ["MATERIALES INSTALADOS", "MATERIALES RETIRADOS", "OBSERVACIONES POR NODO", 
+                                       "OBSERVACIONES COMPLETAS", "MANO DE OBRA POR NODO"] or (
+                                       isinstance(row[0].value, str) and row[0].value.startswith("BLOQUE: ")):
                         start_col = 1
                         end_col = len(columnas)
                         row_idx = row[0].row
@@ -2110,9 +2318,27 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                             end_row=row_idx,
                             end_column=end_col
                         )
-                    # Opcional: Centrar el texto
-                    row[0].alignment = row[0].alignment.copy(horizontal='center', vertical='center')             
-                      
+                        # Centrar el texto y aplicar formato
+                        row[0].alignment = Alignment(horizontal='center', vertical='center')
+                        row[0].font = Font(bold=True)
+                        
+                        # Aplicar color de fondo según el tipo de encabezado
+                        if row[0].value == "MANO DE OBRA POR NODO":
+                            row[0].fill = PatternFill("solid", fgColor="009900")  # Verde
+                            row[0].font = Font(bold=True, color="FFFFFF")  # Texto blanco
+                        elif isinstance(row[0].value, str) and row[0].value.startswith("BLOQUE: "):
+                            row[0].fill = PatternFill("solid", fgColor="AAAAAA")  # Gris
+                        else:
+                            row[0].fill = PatternFill("solid", fgColor="DDDDDD")  # Gris claro
+                
+                # Configurar el ajuste de texto para las celdas de observaciones y mano de obra
+                for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
+                    for cell in row:
+                        if isinstance(cell.value, str) and '\n' in cell.value:
+                            cell.alignment = Alignment(wrap_text=True, vertical='top')
+                            # Ajustar altura de fila para acomodar el texto
+                            if cell.row > 1:  # Evitar ajustar la fila de encabezados
+                                ws.row_dimensions[cell.row].height = max(15 * cell.value.count('\n') + 15, 15)
               
             # Eliminar hoja temporal si se crearon hojas
             if sheets_created:
@@ -2134,6 +2360,7 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
 
     output.seek(0)
     return output
+
 
 @app.post("/upload/")
 async def subir_archivos(
