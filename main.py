@@ -256,7 +256,6 @@ def normalizar_barrio(barrio):
         return 'Sin barrio'
     return barrio_str.title().strip()
            
-
 def procesar_archivo_modernizacion(file: UploadFile):
     try:
         contenido = file.file.read()
@@ -354,7 +353,7 @@ def procesar_archivo_modernizacion(file: UploadFile):
                 barrio = fila.get("3.Barrio", "")
                 barrio_normalizado = normalizar_barrio(barrio)
                                      
-                original_nodo = str(fila["1.NODO DEL POSTE."]).strip()  # Limpiar y convertir a string
+                original_nodo = str(fila["1.NODO DEL POSTE."]).strip().replace(' ', '').replace('-', '').upper()
                 
                 # Guardar la fecha de sincronización para este nodo/registro
                 fecha_sincronizacion = fila["FechaSincronizacion"]
@@ -411,43 +410,46 @@ def procesar_archivo_modernizacion(file: UploadFile):
                             if aspecto_limpio not in ['', 'NA', 'NINGUNO', 'N/A']:
                                 datos[ot]['aspectos_retirados'][key][nodo].add(aspecto_limpio)
                     
-                    # Process N1 and N2 code information separately - don't add materials here
-                    if pd.notna(codigo_n1) and str(codigo_n1).strip() not in ['', '0', '0.0'] or pd.notna(potencia_n1) and str(potencia_n1) != "0" and float(potencia_n1) != 0:
-                        try:
-                            potencia_val = float(potencia_n1)
-                            if potencia_val == 0:
-                                key = "CODIGO 1 LUMINARIA INSTALADA"
+                # Procesar códigos N1 y N2 para que sean accesibles para las funciones de mano de obra
+                if pd.notna(codigo_n1) and str(codigo_n1).strip() not in ['', '0', '0.0'] or pd.notna(potencia_n1) and str(potencia_n1) != "0" and float(potencia_n1) != 0:
+                    try:
+                        potencia_val = float(potencia_n1)
+                        if potencia_val == 0:
+                            key = "CODIGO 1 LUMINARIA INSTALADA"
+                        else:
+                            if potencia_val.is_integer():
+                                key = f"CODIGO 1 LUMINARIA INSTALADA {int(potencia_val)} W"
                             else:
-                                if potencia_val.is_integer():
-                                    key = f"CODIGO 1 LUMINARIA INSTALADA {int(potencia_val)} W"
-                                else:
-                                    key = f"CODIGO 1 LUMINARIA INSTALADA {potencia_val} W"
-                            datos[ot]['codigos_n1'][key][nodo].add(str(codigo_n1).strip().upper())
-                        except:
-                            pass                          
+                                key = f"CODIGO 1 LUMINARIA INSTALADA {potencia_val} W"
+                        datos[ot]['codigos_n1'][key][nodo].add(str(codigo_n1).strip().upper())
+                    except:
+                        pass                          
                 
-                    if (
-                        pd.notna(codigo_n2)
-                        and str(codigo_n2).strip() not in ['', '0', '0.0']
-                        or pd.notna(potencia_n2) != "0"
-                        and float(potencia_n2) != 0   
-                        
-                        ):
-                        try:
-                            potencia_val = float(potencia_n2)
-                            if potencia_val == 0:
-                                key = "CODIGO 2 LUMINARIA INSTALADA"
+                # Agregar como material para que sea visible para las funciones de mano de obra
+                if pd.notna(codigo_n1) and str(codigo_n1).strip() not in ['', '0', '0.0']:
+                    material_key = f"MATERIAL|CODIGO DE LUMINARIA INSTALADA N1"
+                    datos[ot]['materiales'][material_key][nodo] += 1  # Cada código cuenta como 1 unidad
+                
+                if pd.notna(codigo_n2) and str(codigo_n2).strip() not in ['', '0', '0.0'] or pd.notna(potencia_n2) and str(potencia_n2) != "0" and float(potencia_n2) != 0:
+                    try:
+                        potencia_val = float(potencia_n2)
+                        if potencia_val == 0:
+                            key = "CODIGO 2 LUMINARIA INSTALADA"
+                        else:
+                            if potencia_val.is_integer():
+                                key = f"CODIGO 2 LUMINARIA INSTALADA {int(potencia_val)} W"
                             else:
-                                if potencia_val.is_integer():
-                                    key = f"CODIGO 2 LUMINARIA INSTALADA {int(potencia_val)} W"
-                                else:
-                                    key = f"CODIGO 2 LUMINARIA INSTALADA {potencia_val} W"
-                            datos[ot]['codigos_n2'][key][nodo].add(str(codigo_n2).strip().upper())
-                        except:
-                            pass
+                                key = f"CODIGO 2 LUMINARIA INSTALADA {potencia_val} W"
+                        datos[ot]['codigos_n2'][key][nodo].add(str(codigo_n2).strip().upper())
+                    except:
+                        pass
                                             
-                            
-                    # PROCESAR MATERIALES RETIRADOS
+                # Agregar como material para que sea visible para las funciones de mano de obra
+                if pd.notna(codigo_n2) and str(codigo_n2).strip() not in ['', '0', '0.0']:
+                    material_key = f"MATERIAL|CODIGO DE LUMINARIA INSTALADA N2"
+                    datos[ot]['materiales'][material_key][nodo] += 1
+                
+                # PROCESAR MATERIALES RETIRADOS
                 for (tipo, n), col_codigo in codigo_columns.items():
                     codigo_val = fila.get(col_codigo)
                     col_potencia = None
@@ -465,12 +467,11 @@ def procesar_archivo_modernizacion(file: UploadFile):
                     
                     potencia_es_valida = False
                     if col_potencia and pd.notna(potencia_val):
-                        if col_potencia and pd.notna(potencia_val):
-                            try: 
-                                potencia_float = float(potencia_val)
-                                potencia_es_valida = potencia_float > 0
-                            except:
-                                pass
+                        try: 
+                            potencia_float = float(potencia_val)
+                            potencia_es_valida = potencia_float > 0
+                        except:
+                            pass
                     
                     if codigo_es_valido or potencia_es_valida:
                         if tipo == 'FOTOCELDA':
@@ -496,6 +497,7 @@ def procesar_archivo_modernizacion(file: UploadFile):
                             aspecto_limpio = str(aspecto).strip().upper()
                             if aspecto_limpio not in ['', 'NA', 'NINGUNO', 'N/A']:  # Filtrar valores no válidos
                                 datos[ot]['aspectos_retirados'][key][nodo].add(aspecto_limpio)  
+                
                 # Procesar materiales INSTALADOS
                 for mat_col, cant_col in zip(material_cols, cantidad_cols):
                     material = fila[mat_col]
@@ -508,14 +510,14 @@ def procesar_archivo_modernizacion(file: UploadFile):
                         if pd.notna(aspecto):
                             aspecto_limpio = str(aspecto).strip().upper()
                             if aspecto_limpio not in ['', 'NA', 'NINGUNO', 'N/A']:  # Filtrar valores no válidos
-                                datos[ot]['aspectos_retirados'][key][nodo].add(aspecto_limpio)                               
+                                datos[ot]['aspectos_materiales'][key][nodo].add(aspecto_limpio)                               
                                                
         return datos, datos_por_barrio, dfs_originales
 
     except Exception as e:
         logger.error(f"Error procesando {file.filename}: {str(e)}")
         raise HTTPException(500, detail=f"Error en archivo {file.filename}")
-    
+
 def procesar_archivo_mantenimiento(file: UploadFile):
     try:
         contenido = file.file.read()
@@ -580,6 +582,176 @@ def procesar_archivo_mantenimiento(file: UploadFile):
         logger.error(f"Error procesando {file.filename}: {str(e)}")
         raise HTTPException(500, detail=f"Error en archivo {file.filename}")
 
+def agregar_hoja_asociaciones(writer, datos_combinados):
+    wb = writer.book
+    ws = wb.create_sheet("Asociaciones")
+
+    # Estilos
+    thin   = Side(style='thin')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    red    = PatternFill("solid", fgColor="FF0000")
+    gray   = PatternFill("solid", fgColor="CCCCCC")
+    bold   = Font(bold=True)
+    center = Alignment(horizontal='center', vertical='center')
+
+    # Cargo la plantilla (una sola vez)
+    plantilla = cargar_plantilla_mano_obra()
+
+    # Los cuatro bloques con sus keywords
+    bloques = [
+        ("Postes",
+         ["APERTURA", "APLOMADA", "CONCRETADA", "HINCADA"],
+         ["POSTE"]),
+        ("Instalación luminarias",
+         ["INSTALACION LUMINARIAS"],
+         ["LUMINARIA", "FOTOCELDA", "GRILLETE", "BRAZO"]),
+        ("Conexión a tierra",
+         ["CONEXIÓN A CABLE A TIERRA", "INSTALACION KIT SPT", "INSTALACION DE ATERRIZAJES"],
+         ["KIT DE PUESTA A TIERRA", "CONECT PERF", "CONECTOR BIME/COM", "ALAMBRE", "TUERCA", "TORNILLO", "VARILLA"]),
+        ("Desmontaje / Transporte",
+         ["DESMONTAJE", "TRANSPORTE", "TRANSP."],
+         ["ALAMBRE", "BRAZO", "CÓDIGO", "CABLE"]),
+        ("Instalación de cables",
+         ["INSTALACION CABLE"],
+         ["CABLE", "TPX", "ALAMBRE"]),
+        ("Otros trabajos",
+         ["VESTIDA", "CAJA", "PINTADA", "EXCAVACION", "RECUPERACION", "SOLDADURA", "INSTALACION TRAMA", "INSTALACION CORAZA"],
+         ["PERCHA", "CAJA", "TUBO", "TUBERIA", "CONDUIT"])
+    ]
+
+    row = 1
+    for ot, info in datos_combinados.items():
+        # 1) Cabecera de OT
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
+        c = ws.cell(row=row, column=1, value=f"OT: {ot}")
+        c.font = Font(bold=True, size=14)
+        c.alignment = center
+        row += 2
+
+        # 2) Defino nodos ordenados por fecha de sincronización
+        nodos = sorted(
+            info.get('fechas_sync', {}).keys(),
+            key=lambda n: pd.to_datetime(
+                info['fechas_sync'].get(n, ""),
+                format='%d/%m/%Y %H:%M:%S',
+                errors='coerce'
+            )
+        )
+
+        # 3) Por cada nodo...
+        for nodo in nodos:
+            # Cabecera de nodo
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
+            cn = ws.cell(row=row, column=1, value=f"Nodo: {nodo}")
+            cn.font = Font(bold=True, size=12)
+            cn.fill = gray
+            row += 1
+
+            # 4) Los bloques
+            for titulo, kw_mo, kw_mat in bloques:
+                # Encabezado de bloque
+                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
+                cb = ws.cell(row=row, column=1, value=titulo)
+                cb.font = Font(bold=True, color="FFFFFF")
+                cb.fill = red
+                row += 1
+
+                # Cabeceras de mini-tabla
+                headers = [
+                    "Mano de obra", "Unidad", "Cant. MO",
+                    "Material Nuevo", "Cant. Mat.",
+                    "Material Ret.",   "Cant. Mat."
+                ]
+                for col_idx, h in enumerate(headers, start=1):
+                    ch = ws.cell(row=row, column=col_idx, value=h)
+                    ch.font = bold
+                    ch.border = border
+                    ch.alignment = center
+                    if col_idx == 1:
+                        ch.fill = red
+                row += 1
+
+                # Filtrar partidas de la plantilla que pertenecen a este bloque
+                partidas = [
+                    item for item in plantilla
+                    if any(k in item['DESCRIPCION MANO DE OBRA'].upper() for k in kw_mo)
+                ]
+
+                # Para cada partida, calcular la mano de obra necesaria
+                for item in partidas:
+                    desc = item['DESCRIPCION MANO DE OBRA']
+                    und = item['UNIDAD']
+                    
+                    # Usar la función mejorada para calcular cantidades de mano de obra
+                    total_mo, lst_inst, lst_ret = calcular_cantidad_mano_obra(
+                        desc, 
+                        info.get('materiales', {}), 
+                        info.get('materiales_retirados', {}),
+                        nodo
+                    )
+                    
+                    # Si no hay mano de obra requerida, continuamos con la siguiente partida
+                    if total_mo == 0:
+                        continue
+                    
+                    # Contar materiales instalados y retirados
+                    # Para materiales instalados, obtener las cantidades reales
+                    materiales_inst_con_qty = []
+                    for mat_name in lst_inst:
+                        for material_key, nodos_qty in info.get('materiales', {}).items():
+                            if material_key.split("|")[1].upper() == mat_name and nodo in nodos_qty:
+                                qty = nodos_qty[nodo]
+                                materiales_inst_con_qty.append(f"{mat_name} ({qty})")
+                                break
+                        else:
+                            materiales_inst_con_qty.append(mat_name)
+                    
+                    # Para materiales retirados, obtener las cantidades reales
+                    materiales_ret_con_qty = []
+                    for mat_name in lst_ret:
+                        for material_key, nodos_qty in info.get('materiales_retirados', {}).items():
+                            if material_key.split("|")[1].upper() == mat_name and nodo in nodos_qty:
+                                qty = nodos_qty[nodo]
+                                materiales_ret_con_qty.append(f"{mat_name} ({qty})")
+                                break
+                        else:
+                            materiales_ret_con_qty.append(mat_name)
+                    
+                    # Calcular sumas totales de materiales
+                    sum_inst = sum(
+                        nodos_qty[nodo] 
+                        for material_key, nodos_qty in info.get('materiales', {}).items() 
+                        if material_key.split("|")[1].upper() in lst_inst and nodo in nodos_qty
+                    ) if lst_inst else 0
+                    
+                    sum_ret = sum(
+                        nodos_qty[nodo] 
+                        for material_key, nodos_qty in info.get('materiales_retirados', {}).items() 
+                        if material_key.split("|")[1].upper() in lst_ret and nodo in nodos_qty
+                    ) if lst_ret else 0
+
+                    # Escribo la fila
+                    ws.cell(row=row, column=1, value=desc).border = border
+                    ws.cell(row=row, column=2, value=und).border = border
+                    ws.cell(row=row, column=3, value=total_mo).border = border
+
+                    ws.cell(row=row, column=4, value="; ".join(materiales_inst_con_qty)).border = border
+                    ws.cell(row=row, column=5, value=sum_inst if sum_inst > 0 else "").border = border
+                    
+                    ws.cell(row=row, column=6, value="; ".join(materiales_ret_con_qty)).border = border
+                    ws.cell(row=row, column=7, value=sum_ret if sum_ret > 0 else "").border = border
+                    row += 1
+
+                row += 1  # espacio tras bloque
+
+            row += 2  # espacio tras nodo
+
+        row += 4  # espacio tras OT
+
+    # Ajusto ancho de columnas
+    for col_idx in range(1, 8):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 30
+        
 def generate_resumen_general(writer, datos_combinados):
 
     # Recolectar todos los materiales y OTs
@@ -826,6 +998,13 @@ def generate_barrio_sheet(writer, barrio_data, barrio_name):
     worksheet.freeze_panes = 'D2'
 
 def cargar_plantilla_mano_obra():
+    """
+    Carga la plantilla de mano de obra desde un archivo Excel y la modifica para incluir
+    partidas unificadas para luminarias.
+    
+    Returns:
+        list: Lista de diccionarios con las partidas de mano de obra
+    """
     try:
         # Cargar desde archivo en el mismo directorio
         plantilla_path = "plantilla_mano_obra.xlsx"
@@ -844,40 +1023,100 @@ def cargar_plantilla_mano_obra():
         
         if not all(col in df.columns for col in required_columns):
             raise ValueError("Plantilla no tiene las columnas requeridas")
+        
+        # Convertir a lista de diccionarios
+        plantilla_original = df.to_dict('records')
+        
+        # Modificar la plantilla para unificar los tipos de instalación de luminarias
+        plantilla_modificada = []
+        
+        # Banderas para controlar la adición de partidas unificadas
+        tiene_instalacion_luminarias = False
+        tiene_desmontaje_luminarias = False
+        tiene_transporte_luminarias = False
+        
+        # Primero, revisar qué tipos de partidas existen en la plantilla original
+        for partida in plantilla_original:
+            descripcion = partida['DESCRIPCION MANO DE OBRA'].upper()
             
-        return df.to_dict('records')
-        
-    except Exception as e:
-        logger.error(f"Error cargando plantilla: {str(e)}")
-        return []
-
-def tabla_mano_obra():
-    try:
-        # Cargar desde archivo en el mismo directorio
-        plantilla_path = "plantilla_mano_obra.xlsx"
-        
-        if not os.path.exists(plantilla_path):
-            raise FileNotFoundError("Archivo de plantilla no encontrado")
+            # Verificar si hay partidas de instalación de luminarias
+            #if any(tipo in descripcion for tipo in [
+            #    "INSTALACION DE LUMINARIAS EN CAMIONETA", 
+            #    "INSTALACION DE LUMINARIAS EN CANASTA", 
+            #    "INSTALACION DE LUMINARIAS HORIZONTAL ADOSADA"
+            #]):
+            tiene_instalacion_luminarias = True
             
-        df = pd.read_excel(plantilla_path)
-        
-        # Validar estructura
-        required_columns = [
-            'DESCRIPCION MANO DE OBRA',
-            'UNIDAD', 
-            'CANTIDAD',
-        ]
-        
-        if not all(col in df.columns for col in required_columns):
-            raise ValueError("Plantilla no tiene las columnas requeridas")
+            # Verificar si hay partidas de desmontaje de luminarias
+            if "DESMONTAJE" in descripcion and "LUMINARIA" in descripcion:
+                tiene_desmontaje_luminarias = True
             
-        return df.to_dict('records')
+            # Verificar si ya existe una partida de transporte de luminarias
+            elif "TRANSPORTE" in descripcion and "LUMINARIA" in descripcion:
+                tiene_transporte_luminarias = True
+        
+        # Ahora, crear la plantilla modificada
+        for partida in plantilla_original:
+            descripcion = partida['DESCRIPCION MANO DE OBRA'].upper()
+            
+            # Omitir los tipos específicos de instalación de luminarias
+            #if any(tipo in descripcion for tipo in [
+            #    "INSTALACION DE LUMINARIAS EN CAMIONETA", 
+            #    "INSTALACION DE LUMINARIAS EN CANASTA", 
+            #    "INSTALACION DE LUMINARIAS HORIZONTAL ADOSADA"
+            #]):
+            #    # No agregar estas partidas individualmente
+            #    continue
+            
+            # Omitir los tipos específicos de desmontaje de luminarias
+            if "DESMONTAJE" in descripcion and "LUMINARIA" in descripcion and (
+                "CAMIONETA" in descripcion or "CANASTA" in descripcion):
+                # No agregar estas partidas individualmente
+                continue
+            
+            # Mantener otras partidas sin cambios
+            else:
+                plantilla_modificada.append(partida)
+        
+        # Agregar partida unificada de instalación de luminarias
+        if tiene_instalacion_luminarias:
+            plantilla_modificada.append({
+                'DESCRIPCION MANO DE OBRA': "INSTALACION LUMINARIAS ESCALERA/CANASTA",
+                'UNIDAD': "UND",
+                'CANTIDAD': 0  # Se calculará después según el número de nodos
+            })
+        
+        # Agregar partida unificada de desmontaje de luminarias
+        if tiene_desmontaje_luminarias:
+            plantilla_modificada.append({
+                'DESCRIPCION MANO DE OBRA': "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA",
+                'UNIDAD': "UND",
+                'CANTIDAD': 0
+            })
+        
+        # Agregar partida de transporte de luminarias si no existe
+        if not tiene_transporte_luminarias:
+            plantilla_modificada.append({
+                'DESCRIPCION MANO DE OBRA': "TRANSPORTE DE LUMINARIAS",
+                'UNIDAD': "UND",
+                'CANTIDAD': 0  # Se calculará después como 2 por nodo
+            })
+        
+        return plantilla_modificada
         
     except Exception as e:
         logger.error(f"Error cargando plantilla: {str(e)}")
         return []
 
 def plantilla_mano_obra(worksheet, df, plantilla):
+    """
+    Agrega la plantilla de mano de obra a la hoja de Excel.
+    
+    Args:
+        worksheet: Hoja de Excel activa
+        df: DataFrame con los datos
+        plantilla: Plantilla de mano de obra
+    """
     header_font = Font(bold=True)
     cell_border = Border(
         left=Side(style='thin'),
@@ -900,11 +1139,15 @@ def plantilla_mano_obra(worksheet, df, plantilla):
     # Escribir datos
     for idx, item in enumerate(plantilla, 1):
         row_num = start_row + idx
-        worksheet.cell(row=row_num, column=1, value=item['DESCRIPCION MANO DE OBRA']).border = cell_border
+        descripcion = item['DESCRIPCION MANO DE OBRA']
+        
+        # Reemplazar "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA" con "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA"
+        if descripcion == "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA":
+            descripcion = "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA"
+            
+        worksheet.cell(row=row_num, column=1, value=descripcion).border = cell_border
         worksheet.cell(row=row_num, column=2, value=item['UNIDAD']).border = cell_border
         worksheet.cell(row=row_num, column=3, value=item['CANTIDAD']).border = cell_border
-        #worksheet.cell(row=row_num, column=4, value=item['VALOR UNITARIO']).number_format = '"$ "#,##0.00'
-        #worksheet.cell(row=row_num, column=5, value=f'=C{row_num}*D{row_num}').number_format = '"$ "#,##0.00'
     
     # Ajustar anchos de columna
     worksheet.column_dimensions['A'].width = 45
@@ -913,7 +1156,7 @@ def plantilla_mano_obra(worksheet, df, plantilla):
 
 def agregar_tabla_mano_obra(sheet, df, plantilla):
     """
-    Agrega la tabla de mano de obra a la hoja de Excel, organizando por columnas de nodo.
+    Agrega la tabla de mano de obra a la hoja de Excel.
     
     Args:
         sheet: Hoja de Excel activa
@@ -923,12 +1166,16 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
     # Obtener la OT de la primera fila
     ot = df.iloc[0, 0]
     
+    # Obtener información de materiales y postes
+    materiales_instalados = {}
+    materiales_retirados = {}
+    nodos = []
+    
     # Extraer los nombres de las columnas que contienen "Nodo_"
     nodo_cols = [col for col in df.columns if col.startswith("Nodo_")]
     
     # Extraer los nodos de la segunda fila (Nodos postes)
     postes_row = df.iloc[1]
-    nodos = []
     for i, col in enumerate(nodo_cols):
         if pd.notna(postes_row[col]) and postes_row[col]:
             nodo = f"{postes_row[col]}_{i+1}"  # Formato: poste_índice
@@ -942,10 +1189,7 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
         # Si no se puede ordenar numéricamente, mantener el orden original
         pass
     
-    # Procesar materiales instalados y retirados
-    materiales_instalados = {}
-    materiales_retirados = {}
-    
+    # Procesar materiales instalados
     in_materiales = False
     in_retirados = False
     
@@ -986,9 +1230,20 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
     
     # Agregar cabecera de la tabla de mano de obra
     sheet.cell(row=last_row, column=1, value="TABLA DE MANO DE OBRA").font = Font(bold=True, size=14)
-    sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=len(df.columns))
+    sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
     sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
     last_row += 2
+    
+    # Encabezados de la tabla
+    headers = ["DESCRIPCIÓN MANO DE OBRA", "UNIDAD", "CANTIDAD", "NODO", "MATERIALES ASOCIADOS"]
+    for i, header in enumerate(headers, 1):
+        sheet.cell(row=last_row, column=i, value=header).font = Font(bold=True)
+        sheet.cell(row=last_row, column=i).fill = PatternFill("solid", fgColor="DDDDDD")
+        sheet.cell(row=last_row, column=i).border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        )
+    last_row += 1
     
     # Agrupar partidas por bloques para mejor visualización
     bloques = [
@@ -1033,13 +1288,27 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
     plantilla_original = plantilla
     plantilla = partidas_unificadas
     
-    # Crear un diccionario para almacenar la mano de obra por nodo
-    mano_obra_por_nodo = {nodo: {} for nodo in nodos}
-    
-    # Para cada nodo, calcular la mano de obra necesaria
+    # Para cada nodo, mostrar todos los bloques de mano de obra en una mejor organización
     for nodo in nodos:
+        # Obtener poste ID para mostrar
+        poste_id = nodo.split('_')[0]
+        
+        # Insertar encabezado de nodo con mejor diseño
+        sheet.cell(row=last_row, column=1, value=f"NODO: {poste_id}").font = Font(bold=True, size=12)
+        sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
+        sheet.cell(row=last_row, column=1).fill = PatternFill("solid", fgColor="3366FF")  # Azul
+        sheet.cell(row=last_row, column=1).font = Font(bold=True, color="FFFFFF")  # Texto blanco
+        sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
+        last_row += 1
+        
+        # Contador para comprobar si hay alguna partida para este nodo
+        partidas_nodo_count = 0
+        
         # Para cada bloque de partidas
         for titulo_bloque, keywords_mo, keywords_mat in bloques:
+            # Variables para rastrear si ya hemos añadido el título del bloque
+            bloque_agregado = False
+            
             # Filtrar partidas del bloque actual
             partidas_filtradas = [
                 item for item in plantilla
@@ -1050,6 +1319,15 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
             for partida in partidas_filtradas:
                 descripcion = partida['DESCRIPCION MANO DE OBRA']
                 unidad = partida['UNIDAD']
+                
+                # Determinar si se trata de una partida específica para cierto tipo de poste
+                tipo_poste = None
+                if "METALICO" in descripcion.upper() or "METÁLICO" in descripcion.upper():
+                    tipo_poste = "METALICO"
+                elif "FIBRA" in descripcion.upper():
+                    tipo_poste = "FIBRA"
+                elif "CONCRETO" in descripcion.upper() or "HORMIGÓN" in descripcion.upper():
+                    tipo_poste = "CONCRETO"
                 
                 # Caso especial para desmontaje de luminarias unificado
                 cantidad_mo = 0
@@ -1081,168 +1359,93 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
                         nodo
                     )
                 
-                # Solo agregar partidas con cantidad > 0
+                # Solo agregar filas para partidas con cantidad > 0 
                 if cantidad_mo > 0:
-                    # Si este bloque no existe en el diccionario del nodo, crearlo
-                    if titulo_bloque not in mano_obra_por_nodo[nodo]:
-                        mano_obra_por_nodo[nodo][titulo_bloque] = []
+                    # Agregar título del bloque si aún no se ha hecho y hay partidas
+                    if not bloque_agregado:
+                        sheet.cell(row=last_row, column=1, value=titulo_bloque).font = Font(bold=True)
+                        sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
+                        sheet.cell(row=last_row, column=1).fill = PatternFill("solid", fgColor="AAAAAA")
+                        sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
+                        last_row += 1
+                        bloque_agregado = True
                     
-                    # Formatear materiales asociados
+                    partidas_nodo_count += 1
+                    
+                    # Descripción de la mano de obra
+                    sheet.cell(row=last_row, column=1, value=descripcion).border = Border(
+                        left=Side(style='thin'), right=Side(style='thin'),
+                        top=Side(style='thin'), bottom=Side(style='thin')
+                    )
+                    
+                    # Unidad
+                    sheet.cell(row=last_row, column=2, value=unidad).border = Border(
+                        left=Side(style='thin'), right=Side(style='thin'),
+                        top=Side(style='thin'), bottom=Side(style='thin')
+                    )
+                    sheet.cell(row=last_row, column=2).alignment = Alignment(horizontal='center')
+                    
+                    # Cantidad
+                    sheet.cell(row=last_row, column=3, value=cantidad_mo).border = Border(
+                        left=Side(style='thin'), right=Side(style='thin'),
+                        top=Side(style='thin'), bottom=Side(style='thin')
+                    )
+                    sheet.cell(row=last_row, column=3).alignment = Alignment(horizontal='center')
+                    
+                    # Nodo
+                    # Extraer el número de poste del nodo
+                    poste = nodo.split('_')[0]
+                    sheet.cell(row=last_row, column=4, value=poste).border = Border(
+                        left=Side(style='thin'), right=Side(style='thin'),
+                        top=Side(style='thin'), bottom=Side(style='thin')
+                    )
+                    sheet.cell(row=last_row, column=4).alignment = Alignment(horizontal='center')
+                    
+                    # Materiales asociados
                     materiales_texto = []
                     if materiales_inst:
                         materiales_texto.append("INST: " + ", ".join(materiales_inst))
                     if materiales_ret:
                         materiales_texto.append("RET: " + ", ".join(materiales_ret))
                     
-                    # Agregar la partida al bloque correspondiente
-                    mano_obra_por_nodo[nodo][titulo_bloque].append({
-                        'descripcion': descripcion,
-                        'unidad': unidad,
-                        'cantidad': cantidad_mo,
-                        'materiales': "\n".join(materiales_texto)
-                    })
-    
-    # Ahora, crear la tabla de mano de obra organizada por bloques
-    for titulo_bloque, keywords_mo, _ in bloques:
-        # Verificar si algún nodo tiene partidas para este bloque
-        if any(titulo_bloque in mano_obra_por_nodo[nodo] for nodo in nodos):
-            # Encabezado del bloque
-            sheet.cell(row=last_row, column=1, value=titulo_bloque).font = Font(bold=True)
-            sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=len(df.columns))
-            sheet.cell(row=last_row, column=1).fill = PatternFill("solid", fgColor="AAAAAA")
+                    sheet.cell(row=last_row, column=5, value="\n".join(materiales_texto)).border = Border(
+                        left=Side(style='thin'), right=Side(style='thin'),
+                        top=Side(style='thin'), bottom=Side(style='thin')
+                    )
+                    sheet.cell(row=last_row, column=5).alignment = Alignment(vertical='top', wrap_text=True)
+                    
+                    last_row += 1
+            
+            # Solo añadir espacio si se agregó alguna partida en este bloque
+            if bloque_agregado:
+                last_row += 1
+        
+        # Si no hay partidas para este nodo, mostrar mensaje indicativo
+        if partidas_nodo_count == 0:
+            sheet.cell(row=last_row, column=1, value="No hay partidas de mano de obra asociadas a este nodo").border = Border(
+                left=Side(style='thin'), right=Side(style='thin'),
+                top=Side(style='thin'), bottom=Side(style='thin')
+            )
+            sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
             sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
             last_row += 1
-            
-            # Encabezados de columnas
-            headers = ["DESCRIPCIÓN MANO DE OBRA", "UNIDAD", "CANTIDAD TOTAL"]
-            for i, header in enumerate(headers, 1):
-                cell = sheet.cell(row=last_row, column=i, value=header)
-                cell.font = Font(bold=True)
-                cell.fill = PatternFill("solid", fgColor="DDDDDD")
-                cell.border = Border(
-                    left=Side(style='thin'), right=Side(style='thin'),
-                    top=Side(style='thin'), bottom=Side(style='thin')
-                )
-                cell.alignment = Alignment(horizontal='center', vertical='center')
-            
-            # Agregar encabezados para cada nodo
-            for i, nodo in enumerate(nodos):
-                poste = nodo.split('_')[0]
-                cell = sheet.cell(row=last_row, column=i+4, value=f"NODO {poste}")
-                cell.font = Font(bold=True)
-                cell.fill = PatternFill("solid", fgColor="DDDDDD")
-                cell.border = Border(
-                    left=Side(style='thin'), right=Side(style='thin'),
-                    top=Side(style='thin'), bottom=Side(style='thin')
-                )
-                cell.alignment = Alignment(horizontal='center', vertical='center')
-            
-            last_row += 1
-            
-            # Recopilar todas las descripciones únicas de mano de obra para este bloque
-            descripciones_unicas = set()
-            for nodo in nodos:
-                if titulo_bloque in mano_obra_por_nodo[nodo]:
-                    for partida in mano_obra_por_nodo[nodo][titulo_bloque]:
-                        descripciones_unicas.add(partida['descripcion'])
-            
-            # Para cada descripción única, crear una fila
-            for descripcion in sorted(descripciones_unicas):
-                # Encontrar la unidad (debería ser la misma para la misma descripción)
-                unidad = next((
-                    partida['unidad'] 
-                    for nodo in nodos 
-                    if titulo_bloque in mano_obra_por_nodo[nodo] 
-                    for partida in mano_obra_por_nodo[nodo][titulo_bloque] 
-                    if partida['descripcion'] == descripcion
-                ), "UND")
-                
-                # Calcular la cantidad total sumando de todos los nodos
-                cantidad_total = sum(
-                    partida['cantidad']
-                    for nodo in nodos
-                    if titulo_bloque in mano_obra_por_nodo[nodo]
-                    for partida in mano_obra_por_nodo[nodo][titulo_bloque]
-                    if partida['descripcion'] == descripcion
-                )
-                
-                # Escribir la descripción, unidad y cantidad total
-                sheet.cell(row=last_row, column=1, value=descripcion).border = Border(
-                    left=Side(style='thin'), right=Side(style='thin'),
-                    top=Side(style='thin'), bottom=Side(style='thin')
-                )
-                
-                sheet.cell(row=last_row, column=2, value=unidad).border = Border(
-                    left=Side(style='thin'), right=Side(style='thin'),
-                    top=Side(style='thin'), bottom=Side(style='thin')
-                )
-                sheet.cell(row=last_row, column=2).alignment = Alignment(horizontal='center')
-                
-                sheet.cell(row=last_row, column=3, value=cantidad_total).border = Border(
-                    left=Side(style='thin'), right=Side(style='thin'),
-                    top=Side(style='thin'), bottom=Side(style='thin')
-                )
-                sheet.cell(row=last_row, column=3).alignment = Alignment(horizontal='center')
-                
-                # Para cada nodo, escribir la cantidad y materiales asociados
-                for i, nodo in enumerate(nodos):
-                    # Buscar la partida para este nodo y descripción
-                    partida_nodo = next((
-                        partida
-                        for partida in mano_obra_por_nodo[nodo].get(titulo_bloque, [])
-                        if partida['descripcion'] == descripcion
-                    ), None)
-                    
-                    if partida_nodo:
-                        # Formatear el contenido: cantidad + materiales
-                        contenido = f"Cantidad: {partida_nodo['cantidad']}"
-                        if partida_nodo['materiales']:
-                            contenido += f"\n\nMateriales:\n{partida_nodo['materiales']}"
-                        
-                        cell = sheet.cell(row=last_row, column=i+4, value=contenido)
-                        cell.border = Border(
-                            left=Side(style='thin'), right=Side(style='thin'),
-                            top=Side(style='thin'), bottom=Side(style='thin')
-                        )
-                        cell.alignment = Alignment(vertical='top', wrap_text=True)
-                    else:
-                        # Si no hay partida para este nodo, dejar la celda vacía pero con borde
-                        cell = sheet.cell(row=last_row, column=i+4, value="")
-                        cell.border = Border(
-                            left=Side(style='thin'), right=Side(style='thin'),
-                            top=Side(style='thin'), bottom=Side(style='thin')
-                        )
-                
-                # Ajustar altura de la fila según el contenido
-                max_lines = 1
-                for i, nodo in enumerate(nodos):
-                    cell = sheet.cell(row=last_row, column=i+4)
-                    if cell.value and isinstance(cell.value, str):
-                        lines = cell.value.count('\n') + 1
-                        max_lines = max(max_lines, lines)
-                
-                sheet.row_dimensions[last_row].height = max(15 * max_lines + 5, 20)
-                
-                last_row += 1
-            
-            # Espacio después de cada bloque
-            last_row += 1
+        
+        # Espacio después de cada nodo para mejor visualización
+        last_row += 2
     
-    # Agregar resumen general de mano de obra
+    # Resumen general de mano de obra (agregar después de mostrar por nodos)
     sheet.cell(row=last_row, column=1, value="RESUMEN GENERAL DE MANO DE OBRA").font = Font(bold=True, size=14)
-    sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=len(df.columns))
+    sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
     sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
     sheet.cell(row=last_row, column=1).fill = PatternFill("solid", fgColor="009900")  # Verde
     sheet.cell(row=last_row, column=1).font = Font(bold=True, color="FFFFFF")  # Texto blanco
     last_row += 2
     
     # Encabezados para el resumen
-    headers = ["DESCRIPCIÓN MANO DE OBRA", "UNIDAD", "CANTIDAD TOTAL"]
-    for i, header in enumerate(headers, 1):
-        cell = sheet.cell(row=last_row, column=i, value=header)
-        cell.font = Font(bold=True)
-        cell.fill = PatternFill("solid", fgColor="DDDDDD")
-        cell.border = Border(
+    for i, header in enumerate(["DESCRIPCIÓN MANO DE OBRA", "UNIDAD", "CANTIDAD TOTAL", "", ""], 1):
+        sheet.cell(row=last_row, column=i, value=header).font = Font(bold=True)
+        sheet.cell(row=last_row, column=i).fill = PatternFill("solid", fgColor="DDDDDD")
+        sheet.cell(row=last_row, column=i).border = Border(
             left=Side(style='thin'), right=Side(style='thin'),
             top=Side(style='thin'), bottom=Side(style='thin')
         )
@@ -1304,7 +1507,7 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
     for titulo_bloque, keywords_mo, _ in bloques:
         # Insertar título del bloque
         sheet.cell(row=last_row, column=1, value=titulo_bloque).font = Font(bold=True)
-        sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=3)
+        sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
         sheet.cell(row=last_row, column=1).fill = PatternFill("solid", fgColor="AAAAAA")
         sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
         last_row += 1
@@ -1344,7 +1547,7 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
         last_row += 1
     
     # Ajustar ancho de columnas para mejor visualización
-    for col in range(1, len(df.columns) + 1):
+    for col in range(1, 6):
         col_letter = get_column_letter(col)
         max_length = 0
         for row in range(1, sheet.max_row + 1):
@@ -1357,8 +1560,14 @@ def agregar_tabla_mano_obra(sheet, df, plantilla):
         # Ajustar el ancho con un pequeño margen adicional
         adjusted_width = max_length + 2
         sheet.column_dimensions[col_letter].width = min(adjusted_width, 50)  # Máximo 50 para evitar columnas demasiado anchas
-          
-def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_retirados, nodo):
+
+    # Agregar pie de página
+    last_row += 2
+    #sheet.cell(row=last_row, column=1, value=f"OT: {ot} - Generado automáticamente").font = Font(italic=True)
+    sheet.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=5)
+    sheet.cell(row=last_row, column=1).alignment = Alignment(horizontal='center')
+   
+def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_retirados, nodo, codigos_n1=None, codigos_n2=None):
     """
     Calcula la cantidad de mano de obra necesaria para una partida específica en un nodo.
     
@@ -1367,6 +1576,8 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
         materiales_instalados: Diccionario de materiales instalados por nodo
         materiales_retirados: Diccionario de materiales retirados por nodo
         nodo: Nodo actual
+        codigos_n1: Diccionario de códigos N1 instalados (opcional)
+        codigos_n2: Diccionario de códigos N2 instalados (opcional)
     
     Returns:
         cantidad_mo: Cantidad de mano de obra necesaria
@@ -1379,19 +1590,331 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     
     descripcion_upper = descripcion.upper()
     
-    # Procesamiento especial para desmontaje de luminarias unificado
-    if "DESMONTAJE DE LUMINARIAS UNIFICADO" == descripcion:
-        # Para el desmontaje unificado, buscamos cualquier luminaria en los materiales retirados
-        luminaria_keywords = ["LUMINARIA", "LAMPARA", "LED", "BOMBILLA"]
-        for material_key, nodos_qty in materiales_retirados.items():
-            material_name = material_key.split("|")[1].upper()
-            if any(kw in material_name for kw in luminaria_keywords) and nodo in nodos_qty:
-                qty = nodos_qty[nodo]
-                cantidad_mo += qty
-                materiales_ret.append(material_name)
+    # Unificar todos los tipos de instalación de luminarias bajo un solo tipo
+    if "INSTALACION DE CANASTA/ESCALERA" in descripcion_upper or any(tipo in descripcion_upper for tipo in [
+        "INSTALACION DE LUMINARIAS EN CAMIONETA", 
+        "INSTALACION DE LUMINARIAS EN CANASTA", 
+        "INSTALACION DE LUMINARIAS HORIZONTAL ADOSADA",
+        "INSTALACION LUMINARIAS"
+    ]):
+        # Lista ampliada de palabras clave para detectar luminarias - similar a la lógica de transporte
+        luminaria_keywords = [
+            "LUMINARIA", "LAMPARA", "LED", "BOMBILLA", "PROYECTOR", 
+            "REFLECTOR", "FOCO", "BALASTRO", "CODIGO 1", "CODIGO 2",
+            "CODIGO N1", "CODIGO N2", "CODIGO DE LUMINARIA"
+        ]
+        
+        # Inicializar contador de luminarias instaladas
+        luminarias_instaladas_count = 0
+        
+        # 1. Verificar códigos N1 y N2 instalados
+        if codigos_n1:
+            for key_codigo, nodos_valores in codigos_n1.items():
+                if nodo in nodos_valores:
+                    cantidad_codigos = len(nodos_valores[nodo])
+                    luminarias_instaladas_count += cantidad_codigos
+                    if cantidad_codigos > 0:
+                        materiales_inst.append(f"CÓDIGO N1: {', '.join(nodos_valores[nodo])}")
+        
+        if codigos_n2:
+            for key_codigo, nodos_valores in codigos_n2.items():
+                if nodo in nodos_valores:
+                    cantidad_codigos = len(nodos_valores[nodo])
+                    luminarias_instaladas_count += cantidad_codigos
+                    if cantidad_codigos > 0:
+                        materiales_inst.append(f"CÓDIGO N2: {', '.join(nodos_valores[nodo])}")
+        
+        # 2. Buscar luminarias instaladas en materiales
+        for material_key, nodos_qty in materiales_instalados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if any(kw in material_name for kw in luminaria_keywords) and nodo in nodos_qty:
+                    qty = nodos_qty[nodo]
+                    luminarias_instaladas_count += qty
+                    materiales_inst.append(f"{material_name} ({qty})")
+        
+        # La cantidad de mano de obra es igual al número de luminarias instaladas
+        cantidad_mo = luminarias_instaladas_count
+        
+        # Buscar materiales complementarios independientemente de si encontramos luminarias
+        complementos = ["FOTOCELDA", "GRILLETE", "BRAZO"]
+        for comp_material_key, comp_nodos_qty in materiales_instalados.items():
+            if "|" in comp_material_key:
+                comp_material_name = comp_material_key.split("|")[1].upper()
+                if any(comp in comp_material_name for comp in complementos) and nodo in comp_nodos_qty:
+                    materiales_inst.append(comp_material_name)
+        
         return cantidad_mo, materiales_inst, materiales_ret
     
-    # 1. Mano de obra relacionada con postes
+    # Unificar todos los tipos de desmontaje de luminarias
+    if "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA" in descripcion_upper or (
+        "DESMONTAJE" in descripcion_upper and "LUMINARIA" in descripcion_upper and (
+        "CAMIONETA" in descripcion_upper or "CANASTA" in descripcion_upper)):
+        descripcion_upper = "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA"
+    
+    # PROCESAMIENTO UNIFICADO PARA TRANSPORTE DE LUMINARIAS
+    # Detecta cualquier variante de "transporte" + "luminaria"
+    if any(transp in descripcion_upper for transp in ["TRANSPORTE", "TRANSP."]) and any(lum in descripcion_upper for lum in ["LUMINARIA", "LUMINARIAS"]):
+        # Inicializar contadores
+        luminarias_instaladas_count = 0
+        luminarias_retiradas_count = 0
+        
+        # Lista ampliada de palabras clave para detectar luminarias
+        luminaria_keywords = [
+            "LUMINARIA", "LAMPARA", "LED", "BOMBILLA", "PROYECTOR", 
+            "REFLECTOR", "FOCO", "BALASTRO", "CODIGO 1", "CODIGO 2",
+            "CODIGO N1", "CODIGO N2", "CODIGO DE LUMINARIA"
+        ]
+        
+        # 1. Verificar códigos N1 y N2 instalados
+        if codigos_n1:
+            for key_codigo, nodos_valores in codigos_n1.items():
+                if nodo in nodos_valores:
+                    cantidad_codigos = len(nodos_valores[nodo])
+                    luminarias_instaladas_count += cantidad_codigos
+                    if cantidad_codigos > 0:
+                        materiales_inst.append(f"CÓDIGO N1: {', '.join(nodos_valores[nodo])}")
+        
+        if codigos_n2:
+            for key_codigo, nodos_valores in codigos_n2.items():
+                if nodo in nodos_valores:
+                    cantidad_codigos = len(nodos_valores[nodo])
+                    luminarias_instaladas_count += cantidad_codigos
+                    if cantidad_codigos > 0:
+                        materiales_inst.append(f"CÓDIGO N2: {', '.join(nodos_valores[nodo])}")
+        
+        # 2. Buscar luminarias instaladas en materiales
+        for material_key, nodos_qty in materiales_instalados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if any(kw in material_name for kw in luminaria_keywords) and nodo in nodos_qty:
+                    qty = nodos_qty[nodo]
+                    luminarias_instaladas_count += qty
+                    materiales_inst.append(f"{material_name} ({qty})")
+        
+        # 3. Buscar luminarias retiradas - MEJORADO
+        for material_key, nodos_qty in materiales_retirados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                # Verificar si es una luminaria retirada usando múltiples criterios
+                es_luminaria_retirada = (
+                    any(kw in material_name for kw in luminaria_keywords) or 
+                    "RETIRADA" in material_name or
+                    "LUMINARIA RETIRADA" in material_name or
+                    "BOMBILLA RETIRADA" in material_name or
+                    "FOTOCELDA RETIRADA" in material_name
+                )
+                
+                if es_luminaria_retirada and nodo in nodos_qty:
+                    qty = nodos_qty[nodo]
+                    luminarias_retiradas_count += qty
+                    materiales_ret.append(f"{material_name} ({qty})")
+        
+        # Sumar ambos conteos para transporte total
+        cantidad_mo = luminarias_instaladas_count + luminarias_retiradas_count
+        
+        return cantidad_mo, materiales_inst, materiales_ret
+    
+    # 5. Mano de obra para transporte (MODIFICADO PARA INCLUIR DIFERENTES ELEMENTOS)
+    elif "TRANSPORTE" in descripcion_upper or "TRANSP." in descripcion_upper:
+        # Determinar qué tipo de elemento se está transportando
+        if "POSTE" in descripcion_upper:
+            # Contar postes instalados y retirados
+            for material_key, nodos_qty in materiales_instalados.items():
+                if "|" in material_key:
+                    material_name = material_key.split("|")[1].upper()
+                    if "POSTE" in material_name and nodo in nodos_qty:
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_inst.append(f"{material_name} ({qty})")
+            
+            for material_key, nodos_qty in materiales_retirados.items():
+                if "|" in material_key:
+                    material_name = material_key.split("|")[1].upper()
+                    if "POSTE" in material_name and nodo in nodos_qty:
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_ret.append(f"{material_name} ({qty})")
+        
+        elif "BRAZO" in descripcion_upper:
+            # Contar brazos instalados y retirados
+            for material_key, nodos_qty in materiales_instalados.items():
+                if "|" in material_key:
+                    material_name = material_key.split("|")[1].upper()
+                    if "BRAZO" in material_name and nodo in nodos_qty:
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_inst.append(f"{material_name} ({qty})")
+            
+            for material_key, nodos_qty in materiales_retirados.items():
+                if "|" in material_key:
+                    material_name = material_key.split("|")[1].upper()
+                    if "BRAZO" in material_name and nodo in nodos_qty:
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_ret.append(f"{material_name} ({qty})")
+        
+        elif "CABLE" in descripcion_upper:
+            # Sumar metros de cable instalado y retirado
+            for material_key, nodos_qty in materiales_instalados.items():
+                if "|" in material_key:
+                    material_name = material_key.split("|")[1].upper()
+                    if any(kw in material_name for kw in ["CABLE", "ALAMBRE"]) and nodo in nodos_qty:
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_inst.append(f"{material_name} ({qty})")
+            
+            for material_key, nodos_qty in materiales_retirados.items():
+                if "|" in material_key:
+                    material_name = material_key.split("|")[1].upper()
+                    if any(kw in material_name for kw in ["CABLE", "ALAMBRE"]) and nodo in nodos_qty:
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_ret.append(f"{material_name} ({qty})")
+        
+        elif "VARILLA" in descripcion_upper or "KIT TIERRA" in descripcion_upper:
+            # Contar kits de tierra y varillas
+            for material_key, nodos_qty in materiales_instalados.items():
+                if "|" in material_key:
+                    material_name = material_key.split("|")[1].upper()
+                    if any(kw in material_name for kw in ["VARILLA", "KIT DE PUESTA A TIERRA"]) and nodo in nodos_qty:
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_inst.append(f"{material_name} ({qty})")
+        
+        elif "PERCHA" in descripcion_upper:
+            # Contar perchas instaladas
+            for material_key, nodos_qty in materiales_instalados.items():
+                if "|" in material_key:
+                    material_name = material_key.split("|")[1].upper()
+                    if "PERCHA" in material_name and nodo in nodos_qty:
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_inst.append(f"{material_name} ({qty})")
+        
+        elif "COLLARINES" in descripcion_upper:
+            # Contar bandas/collarines instalados
+            for material_key, nodos_qty in materiales_instalados.items():
+                if "|" in material_key:
+                    material_name = material_key.split("|")[1].upper()
+                    if "BANDA" in material_name and nodo in nodos_qty:
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_inst.append(f"{material_name} ({qty})")
+    
+    # Mano de obra para postes de concreto de 8 a 10 mts
+    elif descripcion_upper in [
+        "APERTURA HUECOS POSTES ANCLAS SECUNDARIAS DE 8 A 10 MTS",
+        "APLOMADA POSTES DE CONCRETO DE 8 A 10 MTS",
+        "CONCRETADA DE POSTE CONCRETO DE 8 A 12 M INCLUYE MATERIALES Y MO",
+        "HINCADA DE POSTES CONCRETO DE 8 A 12 MTS",
+        "TRANSP.POSTE.CONC.10MT.SITIO SIN INCREME"
+    ]:
+        # Buscar postes de concreto de 8-10 mts instalados
+        for material_key, nodos_qty in materiales_instalados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if "POSTE" in material_name and "CONCRETO" in material_name and nodo in nodos_qty:
+                    # Verificar que sea un poste de 8-10 mts
+                    if any(altura in material_name for altura in ["8M", "9M", "10M"]):
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_inst.append(material_name)
+        return cantidad_mo, materiales_inst, materiales_ret
+    
+    # Mano de obra para postes de concreto de 11 a 14 mts
+    elif descripcion_upper in [
+        "APERTURA HUECOS POSTES ANCLAS PRIMARIA DE 11 A 14",
+        "APLOMADA POSTES DE CONCRETO DE 11 A 14 MTS",
+        "CONCRETADA DE POSTE PRIMARIOS",
+        "HINCADA DE POSTES DE 14 MTS",
+        "TRANSP.POSTE.CONC.12MT.SITIO SIN INCREME"
+    ]:
+        # Buscar postes de concreto de 11-14 mts instalados
+        for material_key, nodos_qty in materiales_instalados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if "POSTE" in material_name and "CONCRETO" in material_name and nodo in nodos_qty:
+                    # Verificar que sea un poste de 11-14 mts
+                    if any(altura in material_name for altura in ["11M", "12M", "13M", "14M"]):
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_inst.append(material_name)
+        return cantidad_mo, materiales_inst, materiales_ret
+    
+    # Mano de obra para postes metálicos
+    elif descripcion_upper in [
+        "APERTURA HUECOS POSTES ANCLAS SECUNDARIAS DE 8 A 10 MTS",
+        "APLOMADA POSTES METALICOS Y/O FIBRA VIDRIO 8 A 10",
+        "APLOMADA POSTES METALICOS Y/O FIBRA VIDRIO 11 A 14",
+        "CONCRETADA DE POSTE METALICO 8 A 12 MT INCLUYE MATERIALES Y MO",
+        "HINCADA DE POSTE METALICO DE 4 A 8M",
+        "HINCADA DE POSTE METALICO DE 10 A 12M",
+        "TRANSP.POSTE.METALICO DE 4 A 12MT"
+    ]:
+        # Determinar si se trata de un poste metálico y su altura
+        altura_relacionada = None
+        if "4 A 8M" in descripcion_upper:
+            altura_relacionada = ["4M", "5M", "6M", "7M", "8M"]
+        elif "8 A 10" in descripcion_upper or "10 A 12M" in descripcion_upper:
+            altura_relacionada = ["8M", "9M", "10M", "11M", "12M"]
+        elif "11 A 14" in descripcion_upper:
+            altura_relacionada = ["11M", "12M", "13M", "14M"]
+        
+        # Buscar postes metálicos instalados con la altura correspondiente
+        for material_key, nodos_qty in materiales_instalados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if "POSTE" in material_name and "METALICO" in material_name and nodo in nodos_qty:
+                    # Si se especificó altura y coincide o si no importa la altura
+                    if not altura_relacionada or any(altura in material_name for altura in altura_relacionada):
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_inst.append(material_name)
+        return cantidad_mo, materiales_inst, materiales_ret
+    
+    # Mano de obra para postes de fibra
+    elif descripcion_upper in [
+        "APERTURA HUECOS POSTES ANCLAS SECUNDARIAS DE 8 A 10 MTS",
+        "APLOMADA POSTES METALICOS Y/O FIBRA VIDRIO 8 A 10",
+        "APLOMADA POSTES METALICOS Y/O FIBRA VIDRIO 11 A 14",
+        "CONCRETADA DE POSTE FIBRA 8 A 12 MT INCLUYE MATERIALES",
+        "HINCADA DE POSTE FIBRA DE 8M",
+        "HINCADA DE POSTE FIBRA DE 10 A 12M",
+        "TRANSP.POSTE.METALICO DE 4 A 12MT"  # Se usa el mismo transporte
+    ]:
+        # Determinar si se trata de un poste de fibra y su altura
+        altura_relacionada = None
+        if "8M" in descripcion_upper:
+            altura_relacionada = ["8M"]
+        elif "10 A 12M" in descripcion_upper:
+            altura_relacionada = ["10M", "11M", "12M"]
+        
+        # Buscar postes de fibra instalados con la altura correspondiente
+        for material_key, nodos_qty in materiales_instalados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if "POSTE" in material_name and "FIBRA" in material_name and nodo in nodos_qty:
+                    # Si se especificó altura y coincide o si no importa la altura
+                    if not altura_relacionada or any(altura in material_name for altura in altura_relacionada):
+                        qty = nodos_qty[nodo]
+                        cantidad_mo += qty
+                        materiales_inst.append(material_name)
+        return cantidad_mo, materiales_inst, materiales_ret
+    
+    # Alquiler de Machine Compresor (para todos los postes)
+    elif descripcion_upper == 'ALQUILER DE EQUIPO "MACHINE COMPRESOR"':
+        # Contar todos los postes instalados (de cualquier tipo)
+        for material_key, nodos_qty in materiales_instalados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if "POSTE" in material_name and nodo in nodos_qty:
+                    qty = nodos_qty[nodo]
+                    cantidad_mo += qty
+                    materiales_inst.append(material_name)
+        return cantidad_mo, materiales_inst, materiales_ret
+    
+    # 1. Mano de obra relacionada con postes (casos genéricos no específicos)
     if any(keyword in descripcion_upper for keyword in ["APERTURA", "APLOMADA", "CONCRETADA", "HINCADA"]):
         # Determinar el tipo de poste según la descripción
         tipo_poste_desc = None
@@ -1405,59 +1928,40 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
             tipo_poste_desc = "CONCRETO"
             
         if "8 A 10" in descripcion_upper or "8 A 12" in descripcion_upper:
-            altura_poste = "8M"
+            altura_poste = ["8M", "9M", "10M", "11M", "12M"]
         elif "11 A 14" in descripcion_upper:
-            altura_poste = "12M"
+            altura_poste = ["11M", "12M", "13M", "14M"]
+        elif "4 A 8" in descripcion_upper:
+            altura_poste = ["4M", "5M", "6M", "7M", "8M"]
             
         # Buscar materiales relacionados con postes
         for material_key, nodos_qty in materiales_instalados.items():
-            material_name = material_key.split("|")[1].upper()
-            if "POSTE" in material_name and nodo in nodos_qty:
-                # Verificar coincidencia de tipo y altura si están especificados
-                if tipo_poste_desc and tipo_poste_desc not in material_name:
-                    continue
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if "POSTE" in material_name and nodo in nodos_qty:
+                    # Verificar coincidencia de tipo si está especificado
+                    if tipo_poste_desc and tipo_poste_desc not in material_name:
+                        continue
+                        
+                    # Verificar coincidencia de altura si está especificada
+                    if altura_poste and not any(alt in material_name for alt in altura_poste):
+                        continue
                     
-                if altura_poste and altura_poste not in material_name:
-                    continue
-                
-                qty = nodos_qty[nodo]
-                if qty > 0:
-                    cantidad_mo += qty
-                    materiales_inst.append(material_name)
-    
-    # 2. Mano de obra para instalación de luminarias
-    elif "INSTALACION LUMINARIAS" in descripcion_upper:
-        # Determinar si es instalación en camioneta o canasta
-        tipo_instalacion = None
-        if "CAMIONETA" in descripcion_upper:
-            tipo_instalacion = "CAMIONETA"
-        elif "CANASTA" in descripcion_upper:
-            tipo_instalacion = "CANASTA"
-            
-        luminaria_keywords = ["LUMINARIA", "LAMPARA", "LED", "CODIGO LUMINARIA INSTALADA"]
-        for material_key, nodos_qty in materiales_instalados.items():
-            material_name = material_key.split("|")[1].upper()
-            if any(kw in material_name for kw in luminaria_keywords) and nodo in nodos_qty:
-                qty = nodos_qty[nodo]
-                cantidad_mo += qty
-                materiales_inst.append(material_name)
-                
-                # También buscar materiales complementarios como fotoceldas, grilletes, etc.
-                complementos = ["FOTOCELDA", "GRILLETE", "BRAZO"]
-                for comp_material_key, comp_nodos_qty in materiales_instalados.items():
-                    comp_material_name = comp_material_key.split("|")[1].upper()
-                    if any(comp in comp_material_name for comp in complementos) and nodo in comp_nodos_qty:
-                        materiales_inst.append(comp_material_name)
+                    qty = nodos_qty[nodo]
+                    if qty > 0:
+                        cantidad_mo += qty
+                        materiales_inst.append(material_name)
     
     # 3. Mano de obra para conexión a tierra e instalación de kit SPT
     elif any(keyword in descripcion_upper for keyword in ["CONEXIÓN A CABLE A TIERRA", "INSTALACION DE ATERRIZAJES"]):
         # Verificar primero si hay un kit de puesta a tierra instalado en este nodo
         tiene_kit_spt = False
         for material_key, nodos_qty in materiales_instalados.items():
-            material_name = material_key.split("|")[1].upper()
-            if "KIT DE PUESTA A TIERRA" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
-                tiene_kit_spt = True
-                break
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if "KIT DE PUESTA A TIERRA" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                    tiene_kit_spt = True
+                    break
         
         # Si hay un kit SPT instalado, no cobrar la conexión a tierra
         if tiene_kit_spt:
@@ -1466,32 +1970,27 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
         # Si no hay kit SPT, proceder con la conexión a tierra normal
         kit_keywords = ["CONECT PERF", "CONECTOR BIME", "ALAMBRE", "VARILLA", "TIERRA", "CONECTOR VARILLA"]
         for material_key, nodos_qty in materiales_instalados.items():
-            material_name = material_key.split("|")[1].upper()
-            if any(kw in material_name for kw in kit_keywords) and nodo in nodos_qty:
-                qty = nodos_qty[nodo]
-                if "VARILLA" in material_name:  # Solo contar la varilla principal una vez
-                    cantidad_mo += qty
-                materiales_inst.append(material_name)
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if any(kw in material_name for kw in kit_keywords) and nodo in nodos_qty:
+                    qty = nodos_qty[nodo]
+                    if "VARILLA" in material_name:  # Solo contar la varilla principal una vez
+                        cantidad_mo += qty
+                    materiales_inst.append(material_name)
     
     # 3.1 Mano de obra para instalación de kit SPT
     elif "INSTALACION KIT SPT" in descripcion_upper:
         kit_keywords = ["KIT DE PUESTA A TIERRA", "VARILLA"]
         for material_key, nodos_qty in materiales_instalados.items():
-            material_name = material_key.split("|")[1].upper()
-            if any(kw in material_name for kw in kit_keywords) and nodo in nodos_qty:
-                qty = nodos_qty[nodo]
-                cantidad_mo += qty
-                materiales_inst.append(material_name)
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if any(kw in material_name for kw in kit_keywords) and nodo in nodos_qty:
+                    qty = nodos_qty[nodo]
+                    cantidad_mo += qty
+                    materiales_inst.append(material_name)
     
     # 4. Mano de obra para desmontaje (diferente al unificado)
     elif "DESMONTAJE" in descripcion_upper:
-        # Determinar si es desmontaje en camioneta o canasta
-        tipo_desmontaje = None
-        if "CAMIONETA" in descripcion_upper:
-            tipo_desmontaje = "CAMIONETA"
-        elif "CANASTA" in descripcion_upper:
-            tipo_desmontaje = "CANASTA"
-            
         # Determinar qué tipo de elemento se está desmontando
         keywords = []
         if "LUMINARIA" in descripcion_upper:
@@ -1504,116 +2003,12 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
             keywords = ["BRAZO"]
         
         for material_key, nodos_qty in materiales_retirados.items():
-            material_name = material_key.split("|")[1].upper()
-            if any(kw in material_name for kw in keywords) and nodo in nodos_qty:
-                qty = nodos_qty[nodo]
-                cantidad_mo += qty
-                materiales_ret.append(material_name)
-    
-    # 5. Mano de obra para transporte
-    elif "TRANSPORTE" in descripcion_upper or "TRANSP." in descripcion_upper:
-        # Determinar qué tipo de elemento se está transportando
-        if "LUMINARIAS" in descripcion_upper or "PROYECTORES" in descripcion_upper:
-            # Verificar si el transporte es con canasta o escalera
-            usar_canasta = "CANASTA" in descripcion_upper
-            usar_escalera = "ESCALERA" in descripcion_upper
-            
-            # Si la descripción no especifica el método, verificar el tipo de material
-            if not (usar_canasta or usar_escalera):
-                # Por defecto, asumimos que las luminarias y bombillas requieren canasta
-                usar_canasta = True
-            
-            # Solo contar si el método de transporte coincide con el tipo de material
-            if usar_canasta:
-                # Contar luminarias instaladas y retiradas
-                for material_key, nodos_qty in materiales_instalados.items():
-                    material_name = material_key.split("|")[1].upper()
-                    if any(kw in material_name for kw in ["LUMINARIA", "LED", "CODIGO LUMINARIA"]) and nodo in nodos_qty:
-                        qty = nodos_qty[nodo]
-                        cantidad_mo += qty
-                        materiales_inst.append(material_name)
-                
-                for material_key, nodos_qty in materiales_retirados.items():
-                    material_name = material_key.split("|")[1].upper()
-                    if any(kw in material_name for kw in ["LUMINARIA", "BOMBILLA"]) and nodo in nodos_qty:
-                        qty = nodos_qty[nodo]
-                        cantidad_mo += qty
-                        materiales_ret.append(material_name)
-        
-        elif "POSTE" in descripcion_upper:
-            # Contar postes instalados y retirados
-            for material_key, nodos_qty in materiales_instalados.items():
+            if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
-                if "POSTE" in material_name and nodo in nodos_qty:
-                    qty = nodos_qty[nodo]
-                    cantidad_mo += qty
-                    materiales_inst.append(material_name)
-            
-            for material_key, nodos_qty in materiales_retirados.items():
-                material_name = material_key.split("|")[1].upper()
-                if "POSTE" in material_name and nodo in nodos_qty:
+                if any(kw in material_name for kw in keywords) and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
                     cantidad_mo += qty
                     materiales_ret.append(material_name)
-        
-        elif "BRAZO" in descripcion_upper:
-            # Contar brazos instalados y retirados
-            for material_key, nodos_qty in materiales_instalados.items():
-                material_name = material_key.split("|")[1].upper()
-                if "BRAZO" in material_name and nodo in nodos_qty:
-                    qty = nodos_qty[nodo]
-                    cantidad_mo += qty
-                    materiales_inst.append(material_name)
-            
-            for material_key, nodos_qty in materiales_retirados.items():
-                material_name = material_key.split("|")[1].upper()
-                if "BRAZO" in material_name and nodo in nodos_qty:
-                    qty = nodos_qty[nodo]
-                    cantidad_mo += qty
-                    materiales_ret.append(material_name)
-        
-        elif "CABLE" in descripcion_upper:
-            # Sumar metros de cable instalado y retirado
-            for material_key, nodos_qty in materiales_instalados.items():
-                material_name = material_key.split("|")[1].upper()
-                if any(kw in material_name for kw in ["CABLE", "ALAMBRE"]) and nodo in nodos_qty:
-                    qty = nodos_qty[nodo]
-                    cantidad_mo += qty
-                    materiales_inst.append(material_name)
-            
-            for material_key, nodos_qty in materiales_retirados.items():
-                material_name = material_key.split("|")[1].upper()
-                if any(kw in material_name for kw in ["CABLE", "ALAMBRE"]) and nodo in nodos_qty:
-                    qty = nodos_qty[nodo]
-                    cantidad_mo += qty
-                    materiales_ret.append(material_name)
-        
-        elif "VARILLA" in descripcion_upper or "KIT TIERRA" in descripcion_upper:
-            # Contar kits de tierra y varillas
-            for material_key, nodos_qty in materiales_instalados.items():
-                material_name = material_key.split("|")[1].upper()
-                if any(kw in material_name for kw in ["VARILLA", "KIT DE PUESTA A TIERRA"]) and nodo in nodos_qty:
-                    qty = nodos_qty[nodo]
-                    cantidad_mo += qty
-                    materiales_inst.append(material_name)
-        
-        elif "PERCHA" in descripcion_upper:
-            # Contar perchas instaladas
-            for material_key, nodos_qty in materiales_instalados.items():
-                material_name = material_key.split("|")[1].upper()
-                if "PERCHA" in material_name and nodo in nodos_qty:
-                    qty = nodos_qty[nodo]
-                    cantidad_mo += qty
-                    materiales_inst.append(material_name)
-        
-        elif "COLLARINES" in descripcion_upper:
-            # Contar bandas/collarines instalados
-            for material_key, nodos_qty in materiales_instalados.items():
-                material_name = material_key.split("|")[1].upper()
-                if "BANDA" in material_name and nodo in nodos_qty:
-                    qty = nodos_qty[nodo]
-                    cantidad_mo += qty
-                    materiales_inst.append(material_name)
     
     # 6. Instalación de cable secundario
     elif "INSTALACION CABLE SECUNDARIO" in descripcion_upper:
@@ -1693,7 +2088,7 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 materiales_inst.append(material_name)
     
     # 13. Soldadura por punto
-    elif "SOLDADURA POR PUNTO" in descripcion_upper or "MANO OBRA SOLDADURA" in descripcion_upper:
+    elif "SOLDADURA" in descripcion_upper:
         # Para estos casos, la cantidad se determina por otros medios
         # Podríamos asociar materiales como conectores o empalmes
         for material_key, nodos_qty in materiales_instalados.items():
@@ -1710,7 +2105,6 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 qty = nodos_qty[nodo]
                 cantidad_mo += qty
                 materiales_inst.append(material_name)
-    
     # 15. Instalación de empalmes o conectores
     elif "INSTALACION DE CUBIERTA GEL" in descripcion_upper or "INSTALACION DE EMPALME" in descripcion_upper:
         # Buscar empalmes o conectores
@@ -1766,176 +2160,6 @@ def extraer_cantidad(texto):
     except ValueError:
         return 0  # En caso de error, devolver 0
 
-def agregar_hoja_asociaciones(writer, datos_combinados):
-    wb = writer.book
-    ws = wb.create_sheet("Asociaciones")
-
-    # Estilos
-    thin   = Side(style='thin')
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    red    = PatternFill("solid", fgColor="FF0000")
-    gray   = PatternFill("solid", fgColor="CCCCCC")
-    bold   = Font(bold=True)
-    center = Alignment(horizontal='center', vertical='center')
-
-    # Cargo la plantilla (una sola vez)
-    plantilla = cargar_plantilla_mano_obra()
-
-    # Los cuatro bloques con sus keywords
-    bloques = [
-        ("Postes",
-         ["APERTURA", "APLOMADA", "CONCRETADA", "HINCADA"],
-         ["POSTE"]),
-        ("Instalación luminarias",
-         ["INSTALACION LUMINARIAS"],
-         ["LUMINARIA", "FOTOCELDA", "GRILLETE", "BRAZO"]),
-        ("Conexión a tierra",
-         ["CONEXIÓN A CABLE A TIERRA", "INSTALACION KIT SPT", "INSTALACION DE ATERRIZAJES"],
-         ["KIT DE PUESTA A TIERRA", "CONECT PERF", "CONECTOR BIME/COM", "ALAMBRE", "TUERCA", "TORNILLO", "VARILLA"]),
-        ("Desmontaje / Transporte",
-         ["DESMONTAJE", "TRANSPORTE", "TRANSP."],
-         ["ALAMBRE", "BRAZO", "CÓDIGO", "CABLE"]),
-        ("Instalación de cables",
-         ["INSTALACION CABLE"],
-         ["CABLE", "TPX", "ALAMBRE"]),
-        ("Otros trabajos",
-         ["VESTIDA", "CAJA", "PINTADA", "EXCAVACION", "RECUPERACION", "SOLDADURA", "INSTALACION TRAMA", "INSTALACION CORAZA"],
-         ["PERCHA", "CAJA", "TUBO", "TUBERIA", "CONDUIT"])
-    ]
-
-    row = 1
-    for ot, info in datos_combinados.items():
-        # 1) Cabecera de OT
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
-        c = ws.cell(row=row, column=1, value=f"OT: {ot}")
-        c.font = Font(bold=True, size=14)
-        c.alignment = center
-        row += 2
-
-        # 2) Defino nodos ordenados por fecha de sincronización
-        nodos = sorted(
-            info.get('fechas_sync', {}).keys(),
-            key=lambda n: pd.to_datetime(
-                info['fechas_sync'].get(n, ""),
-                format='%d/%m/%Y %H:%M:%S',
-                errors='coerce'
-            )
-        )
-
-        # 3) Por cada nodo...
-        for nodo in nodos:
-            # Cabecera de nodo
-            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
-            cn = ws.cell(row=row, column=1, value=f"Nodo: {nodo}")
-            cn.font = Font(bold=True, size=12)
-            cn.fill = gray
-            row += 1
-
-            # 4) Los bloques
-            for titulo, kw_mo, kw_mat in bloques:
-                # Encabezado de bloque
-                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
-                cb = ws.cell(row=row, column=1, value=titulo)
-                cb.font = Font(bold=True, color="FFFFFF")
-                cb.fill = red
-                row += 1
-
-                # Cabeceras de mini-tabla
-                headers = [
-                    "Mano de obra", "Unidad", "Cant. MO",
-                    "Material Nuevo", "Cant. Mat.",
-                    "Material Ret.",   "Cant. Mat."
-                ]
-                for col_idx, h in enumerate(headers, start=1):
-                    ch = ws.cell(row=row, column=col_idx, value=h)
-                    ch.font = bold
-                    ch.border = border
-                    ch.alignment = center
-                    if col_idx == 1:
-                        ch.fill = red
-                row += 1
-
-                # Filtrar partidas de la plantilla que pertenecen a este bloque
-                partidas = [
-                    item for item in plantilla
-                    if any(k in item['DESCRIPCION MANO DE OBRA'].upper() for k in kw_mo)
-                ]
-
-                # Para cada partida, calcular la mano de obra necesaria
-                for item in partidas:
-                    desc = item['DESCRIPCION MANO DE OBRA']
-                    und = item['UNIDAD']
-                    
-                    # Usar la función mejorada para calcular cantidades de mano de obra
-                    total_mo, lst_inst, lst_ret = calcular_cantidad_mano_obra(
-                        desc, 
-                        info.get('materiales', {}), 
-                        info.get('materiales_retirados', {}),
-                        nodo
-                    )
-                    
-                    # Si no hay mano de obra requerida, continuamos con la siguiente partida
-                    if total_mo == 0:
-                        continue
-                    
-                    # Contar materiales instalados y retirados
-                    # Para materiales instalados, obtener las cantidades reales
-                    materiales_inst_con_qty = []
-                    for mat_name in lst_inst:
-                        for material_key, nodos_qty in info.get('materiales', {}).items():
-                            if material_key.split("|")[1].upper() == mat_name and nodo in nodos_qty:
-                                qty = nodos_qty[nodo]
-                                materiales_inst_con_qty.append(f"{mat_name} ({qty})")
-                                break
-                        else:
-                            materiales_inst_con_qty.append(mat_name)
-                    
-                    # Para materiales retirados, obtener las cantidades reales
-                    materiales_ret_con_qty = []
-                    for mat_name in lst_ret:
-                        for material_key, nodos_qty in info.get('materiales_retirados', {}).items():
-                            if material_key.split("|")[1].upper() == mat_name and nodo in nodos_qty:
-                                qty = nodos_qty[nodo]
-                                materiales_ret_con_qty.append(f"{mat_name} ({qty})")
-                                break
-                        else:
-                            materiales_ret_con_qty.append(mat_name)
-                    
-                    # Calcular sumas totales de materiales
-                    sum_inst = sum(
-                        nodos_qty[nodo] 
-                        for material_key, nodos_qty in info.get('materiales', {}).items() 
-                        if material_key.split("|")[1].upper() in lst_inst and nodo in nodos_qty
-                    ) if lst_inst else 0
-                    
-                    sum_ret = sum(
-                        nodos_qty[nodo] 
-                        for material_key, nodos_qty in info.get('materiales_retirados', {}).items() 
-                        if material_key.split("|")[1].upper() in lst_ret and nodo in nodos_qty
-                    ) if lst_ret else 0
-
-                    # Escribo la fila
-                    ws.cell(row=row, column=1, value=desc).border = border
-                    ws.cell(row=row, column=2, value=und).border = border
-                    ws.cell(row=row, column=3, value=total_mo).border = border
-
-                    ws.cell(row=row, column=4, value="; ".join(materiales_inst_con_qty)).border = border
-                    ws.cell(row=row, column=5, value=sum_inst if sum_inst > 0 else "").border = border
-                    
-                    ws.cell(row=row, column=6, value="; ".join(materiales_ret_con_qty)).border = border
-                    ws.cell(row=row, column=7, value=sum_ret if sum_ret > 0 else "").border = border
-                    row += 1
-
-                row += 1  # espacio tras bloque
-
-            row += 2  # espacio tras nodo
-
-        row += 4  # espacio tras OT
-
-    # Ajusto ancho de columnas
-    for col_idx in range(1, 8):
-        ws.column_dimensions[get_column_letter(col_idx)].width = 30
-        
 def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_combinados):
     output = BytesIO()
     
@@ -2197,7 +2421,7 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                 # Si hay partidas de desmontaje de luminarias, crear una partida unificada
                 if tipo_desmontaje_luminarias:
                     partida_unificada = {
-                        'DESCRIPCION MANO DE OBRA': "DESMONTAJE DE LUMINARIAS UNIFICADO",
+                        'DESCRIPCION MANO DE OBRA': "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA",
                         'UNIDAD': next((p['UNIDAD'] for p in plantilla if p['DESCRIPCION MANO DE OBRA'] in tipo_desmontaje_luminarias), "UN")
                     }
                     partidas_unificadas.append(partida_unificada)
@@ -2224,12 +2448,12 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                             descripcion = partida['DESCRIPCION MANO DE OBRA']
                             unidad = partida['UNIDAD']
                             
-                            # Caso especial para desmontaje de luminarias unificado
+                            # Caso especial para DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA
                             cantidad_mo = 0
                             materiales_inst = []
                             materiales_ret = []
                             
-                            if descripcion == "DESMONTAJE DE LUMINARIAS UNIFICADO":
+                            if descripcion == "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA":
                                 # Calcular la cantidad sumando todos los tipos de desmontaje
                                 for desc_original in tipo_desmontaje_luminarias:
                                     cant_temp, mat_inst_temp, mat_ret_temp = calcular_cantidad_mano_obra(
@@ -2342,9 +2566,9 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
 
                 # Obtener la plantilla para la mano de obra
                 plantilla = cargar_plantilla_mano_obra()
-                plantiall2 = tabla_mano_obra()
+                #plantiall2 = tabla_mano_obra()
                 # Agregar la tabla de mano de obra en la hoja (ahora solo como referencia, ya que la mostramos en línea)
-                plantilla_mano_obra(sheet, df, plantiall2)
+                #plantilla_mano_obra(sheet, df, plantiall2)
                 # Ya no necesitamos llamar a agregar_tabla_mano_obra aquí, ya que la mano de obra se muestra en línea
                 # agregar_tabla_mano_obra(sheet, df, plantilla)                           
                   
