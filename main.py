@@ -245,6 +245,49 @@ def generate_resumen_tecnicos(writer, datos_combinados, df_originales):
     # Configurar congelación de paneles
     worksheet.freeze_panes = 'D2'
 
+def extraer_cantidad(texto):
+    """
+    Extrae la cantidad numérica de un texto.
+    
+    Formatos soportados:
+    - 'Descripción (cantidad)'
+    - 'Descripción cantidad UND'
+    - 'cantidad UND'
+    
+    Args:
+        texto: Texto del que extraer la cantidad
+        
+    Returns:
+        float: Cantidad extraída o 0 si no se encuentra
+    """
+    try:
+        # Caso 1: Formato 'Descripción (cantidad)'
+        if '(' in texto and ')' in texto:
+            cantidad_str = texto.split('(')[-1].rstrip(')')
+            return float(cantidad_str)
+        
+        # Caso 2: Buscar patrón de número seguido de UND
+        palabras = texto.split()
+        for i, palabra in enumerate(palabras):
+            if palabra.upper() in ["UND", "UN", "ML", "M", "KG", "MT", "MTS"]:
+                if i > 0 and palabras[i-1].replace(',', '.').replace('-', '').isdigit():
+                    return float(palabras[i-1].replace(',', '.'))
+                elif i > 0:
+                    try:
+                        return float(palabras[i-1].replace(',', '.'))
+                    except ValueError:
+                        pass
+        
+        # Caso 3: Intentar encontrar cualquier número en el texto
+        import re
+        numeros = re.findall(r'\d+(?:\.\d+)?', texto.replace(',', '.'))
+        if numeros:
+            return float(numeros[0])
+            
+        return 0
+    except ValueError:
+        return 0  # En caso de error, devolver 0
+
 def normalizar_barrio(barrio):
     barrio_str = str(barrio).strip()
     try:
@@ -909,8 +952,8 @@ def plantilla_mano_obra(worksheet, df, plantilla):
         descripcion = item['DESCRIPCION MANO DE OBRA']
         
         # Reemplazar "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA" con "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA"
-        if descripcion == "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA":
-            descripcion = "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA"
+        #if descripcion == "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA":
+        #    descripcion = "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA"
             
         worksheet.cell(row=row_num, column=1, value=descripcion).border = cell_border
         worksheet.cell(row=row_num, column=2, value=item['UNIDAD']).border = cell_border
@@ -920,6 +963,7 @@ def plantilla_mano_obra(worksheet, df, plantilla):
     worksheet.column_dimensions['A'].width = 45
     worksheet.column_dimensions['B'].width = 10
     worksheet.column_dimensions['C'].width = 12
+
 
 def agregar_tabla_mano_obra(wb, datos, ot, plantilla_mo):
     """
@@ -999,25 +1043,105 @@ def agregar_tabla_mano_obra(wb, datos, ot, plantilla_mo):
             if hay_codigos or hay_luminarias:
                 break
         
+        # MEJORA: Determinar si hay brazos grandes o pequeños en la OT para decidir el tipo de instalación
+        # MODIFICACIÓN: Solo considerar brazos instalados, no retirados
+        hay_brazos_grandes = False
+        hay_brazos_pequenos = False
+        nodos_con_brazos_grandes = []
+        nodos_con_brazos_pequenos = []
+
+        for nodo in datos[ot]['nodos']:
+            for material_key, nodos_qty in datos[ot]['materiales'].items():
+                if "|" in material_key:
+                    material_name = material_key.split("|")[1].upper()
+                    if "BRAZO" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                        # Intentar extraer la longitud del brazo
+                        longitud_match = re.search(r'(\d+)\s*M', material_name)
+                        if longitud_match:
+                            try:
+                                longitud = int(longitud_match.group(1))
+                                # Considerar brazos de 3 metros o más como grandes (para canasta)
+                                if longitud >= 3:  # Si el brazo es mayor o igual a 3 metros, usar canasta
+                                    hay_brazos_grandes = True
+                                    nodos_con_brazos_grandes.append(nodo)
+                                else:
+                                    hay_brazos_pequenos = True
+                                    nodos_con_brazos_pequenos.append(nodo)
+                            except:
+                                pass
+                        # Si no se puede extraer la longitud pero contiene indicación de tamaño grande
+                        elif "2 1/2" in material_name or "2.5" in material_name:
+                            hay_brazos_grandes = True
+                            nodos_con_brazos_grandes.append(nodo)
+                        # Verificar explícitamente si es un brazo de 3 metros
+                        elif "3 MT" in material_name or "3 MTS" in material_name or "3M" in material_name:
+                            hay_brazos_grandes = True
+                            nodos_con_brazos_grandes.append(nodo)
+                        else:
+                            hay_brazos_pequenos = True
+                            nodos_con_brazos_pequenos.append(nodo)
+        
         # FORZAR la aparición de instalación de luminarias si hay códigos o luminarias
         if hay_codigos or hay_luminarias:
-            descripcion_forzada = "INSTALACION DE LUMINARIAS EN CAMIONETA"
-            mo_acumulada[descripcion_forzada] = 1  # Asignar al menos una unidad
-            nodos_por_descripcion[descripcion_forzada] = ["FORZADO"]
+            # Si hay brazos grandes, forzar instalación en canasta
+            if hay_brazos_grandes:
+                descripcion_forzada = "INSTALACION DE LUMINARIAS EN CANASTA"
+                mo_acumulada[descripcion_forzada] = 1  # Asignar al menos una unidad
+                nodos_por_descripcion[descripcion_forzada] = nodos_con_brazos_grandes
+                
+                # Crear un mensaje explicativo
+                mensaje = "LUMINARIAS CON BRAZOS GRANDES (>= 3M)"
+                if hay_codigos:
+                    mensaje += " - CÓDIGOS N1/N2 PRESENTES"
+                if hay_luminarias:
+                    mensaje += " - MATERIALES DE LUMINARIAS PRESENTES"
+                
+                materiales_por_descripcion_nodo[descripcion_forzada] = {}
+                for nodo in nodos_con_brazos_grandes:
+                    materiales_por_descripcion_nodo[descripcion_forzada][nodo] = {
+                        'instalados': [mensaje],
+                        'retirados': []
+                    }
             
-            # Crear un mensaje explicativo
-            mensaje = "LUMINARIAS DETECTADAS"
-            if hay_codigos:
-                mensaje += " (CÓDIGOS N1/N2 PRESENTES)"
-            if hay_luminarias:
-                mensaje += " (MATERIALES DE LUMINARIAS PRESENTES)"
+            # Si hay brazos pequeños, forzar instalación en camioneta/escalera
+            if hay_brazos_pequenos:
+                descripcion_forzada = "INSTALACION DE LUMINARIAS EN CAMIONETA"
+                mo_acumulada[descripcion_forzada] = 1  # Asignar al menos una unidad
+                nodos_por_descripcion[descripcion_forzada] = nodos_con_brazos_pequenos
+                
+                # Crear un mensaje explicativo
+                mensaje = "LUMINARIAS CON BRAZOS PEQUEÑOS (< 3M)"
+                if hay_codigos:
+                    mensaje += " - CÓDIGOS N1/N2 PRESENTES"
+                if hay_luminarias:
+                    mensaje += " - MATERIALES DE LUMINARIAS PRESENTES"
+                
+                materiales_por_descripcion_nodo[descripcion_forzada] = {}
+                for nodo in nodos_con_brazos_pequenos:
+                    materiales_por_descripcion_nodo[descripcion_forzada][nodo] = {
+                        'instalados': [mensaje],
+                        'retirados': []
+                    }
             
-            materiales_por_descripcion_nodo[descripcion_forzada] = {
-                "FORZADO": {
-                    'instalados': [mensaje],
-                    'retirados': []
+            # Si no se detectaron brazos específicos pero hay luminarias o códigos, forzar instalación genérica
+            if not hay_brazos_grandes and not hay_brazos_pequenos:
+                descripcion_forzada = "INSTALACION DE LUMINARIAS EN CAMIONETA"
+                mo_acumulada[descripcion_forzada] = 1  # Asignar al menos una unidad
+                nodos_por_descripcion[descripcion_forzada] = ["FORZADO"]
+                
+                # Crear un mensaje explicativo
+                mensaje = "LUMINARIAS DETECTADAS"
+                if hay_codigos:
+                    mensaje += " (CÓDIGOS N1/N2 PRESENTES)"
+                if hay_luminarias:
+                    mensaje += " (MATERIALES DE LUMINARIAS PRESENTES)"
+                
+                materiales_por_descripcion_nodo[descripcion_forzada] = {
+                    "FORZADO": {
+                        'instalados': [mensaje],
+                        'retirados': []
+                    }
                 }
-            }
         
         # Procesar cada nodo normalmente (esto puede agregar más información a la partida forzada)
         for nodo in datos[ot]['nodos']:
@@ -1085,26 +1209,41 @@ def agregar_tabla_mano_obra(wb, datos, ot, plantilla_mo):
                     
                     # Crear texto de nodos relacionados con sus materiales
                     nodos_texto = []
+                    codigos_n1 = set()
+                    codigos_n2 = set()
+                    brazos = set()
+                    otros_materiales = set()
+
                     for nodo in nodos:
                         if nodo in materiales_por_descripcion_nodo[descripcion]:
                             materiales = materiales_por_descripcion_nodo[descripcion][nodo]
-                            
+
                             # Formatear materiales instalados
                             mat_instalados = materiales['instalados']
                             mat_retirados = materiales['retirados']
-                            
-                            if mat_instalados or mat_retirados:
-                                texto_nodo = f"NODO {nodo}: "
-                                
-                                if mat_instalados:
-                                    texto_nodo += f"Instalados: {', '.join(mat_instalados)}"
-                                
-                                if mat_retirados:
-                                    if mat_instalados:
-                                        texto_nodo += " | "
-                                    texto_nodo += f"Retirados: {', '.join(mat_retirados)}"
-                                
-                                nodos_texto.append(texto_nodo)
+
+                            # Extraer códigos N1, N2 y brazos
+                            for mat in mat_instalados:
+                                if "CÓDIGO N1:" in mat:
+                                    codigos = mat.replace("CÓDIGO N1:", "").strip()
+                                    codigos_n1.update([c.strip() for c in codigos.split(',')])
+                                elif "CÓDIGO N2:" in mat:
+                                    codigos = mat.replace("CÓDIGO N2:", "").strip()
+                                    codigos_n2.update([c.strip() for c in codigos.split(',')])
+                                elif "BRAZO" in mat:
+                                    brazos.add(mat)
+                                else:
+                                    otros_materiales.add(mat)
+
+                    # Crear un resumen consolidado
+                    if codigos_n1:
+                        nodos_texto.append(f"CÓDIGO N1: {', '.join(sorted(codigos_n1))}")
+                    if codigos_n2 and any(c.strip().lower() != "no" for c in codigos_n2):
+                        nodos_texto.append(f"CÓDIGO N2: {', '.join(sorted(codigos_n2))}")
+                    if brazos:
+                        nodos_texto.append(f"BRAZOS: {', '.join(sorted(brazos))}")
+                    if otros_materiales:
+                        nodos_texto.append(f"OTROS: {', '.join(sorted(otros_materiales))}")
                     
                     # Escribir fila en la tabla
                     ws.cell(row=row_num, column=1).value = descripcion
@@ -1140,26 +1279,41 @@ def agregar_tabla_mano_obra(wb, datos, ot, plantilla_mo):
                 
                 # Crear texto de nodos relacionados con sus materiales
                 nodos_texto = []
+                codigos_n1 = set()
+                codigos_n2 = set()
+                brazos = set()
+                otros_materiales = set()
+
                 for nodo in nodos:
                     if nodo in materiales_por_descripcion_nodo[descripcion]:
                         materiales = materiales_por_descripcion_nodo[descripcion][nodo]
-                        
+
                         # Formatear materiales instalados
                         mat_instalados = materiales['instalados']
                         mat_retirados = materiales['retirados']
-                        
-                        if mat_instalados or mat_retirados:
-                            texto_nodo = f"NODO {nodo}: "
-                            
-                            if mat_instalados:
-                                texto_nodo += f"Instalados: {', '.join(mat_instalados)}"
-                            
-                            if mat_retirados:
-                                if mat_instalados:
-                                    texto_nodo += " | "
-                                texto_nodo += f"Retirados: {', '.join(mat_retirados)}"
-                            
-                            nodos_texto.append(texto_nodo)
+
+                        # Extraer códigos N1, N2 y brazos
+                        for mat in mat_instalados:
+                            if "CÓDIGO N1:" in mat:
+                                codigos = mat.replace("CÓDIGO N1:", "").strip()
+                                codigos_n1.update([c.strip() for c in codigos.split(',')])
+                            elif "CÓDIGO N2:" in mat:
+                                codigos = mat.replace("CÓDIGO N2:", "").strip()
+                                codigos_n2.update([c.strip() for c in codigos.split(',')])
+                            elif "BRAZO" in mat:
+                                brazos.add(mat)
+                            else:
+                                otros_materiales.add(mat)
+
+                # Crear un resumen consolidado
+                if codigos_n1:
+                    nodos_texto.append(f"CÓDIGO N1: {', '.join(sorted(codigos_n1))}")
+                if codigos_n2 and any(c.strip().lower() != "no" for c in codigos_n2):
+                    nodos_texto.append(f"CÓDIGO N2: {', '.join(sorted(codigos_n2))}")
+                if brazos:
+                    nodos_texto.append(f"BRAZOS: {', '.join(sorted(brazos))}")
+                if otros_materiales:
+                    nodos_texto.append(f"OTROS: {', '.join(sorted(otros_materiales))}")
                 
                 # Escribir fila en la tabla
                 ws.cell(row=row_num, column=1).value = descripcion
@@ -1193,7 +1347,7 @@ def agregar_tabla_mano_obra(wb, datos, ot, plantilla_mo):
     except Exception as e:
         logger.error(f"Error agregando tabla de mano de obra: {str(e)}")
         raise
-
+    
 def agregar_hoja_asociaciones(writer, datos_combinados):
     wb = writer.book
     ws = wb.create_sheet("Asociaciones")
@@ -1218,7 +1372,7 @@ def agregar_hoja_asociaciones(writer, datos_combinados):
          ["INSTALACION LUMINARIAS"],
          ["LUMINARIA", "FOTOCELDA", "GRILLETE", "BRAZO"]),
         ("Conexión a tierra",
-         ["CONEXIÓN A CABLE A TIERRA", "INSTALACION KIT SPT", "INSTALACION DE ATERRIZAJES"],
+         ["CONEXIÓN A CABLE A TIERRA", "INSTALACION KIT SPT", "INSTALACION DE ATERRIZAJES",],
          ["KIT DE PUESTA A TIERRA", "CONECT PERF", "CONECTOR BIME/COM", "ALAMBRE", "TUERCA", "TORNILLO", "VARILLA"]),
         ("Desmontaje / Transporte",
          ["DESMONTAJE", "TRANSPORTE", "TRANSP.", "TRANSPORTE COLLARINES"],
@@ -1644,6 +1798,11 @@ def cargar_plantilla_mano_obra():
                 'UNIDAD': "UND",
                 'CANTIDAD': 0
             },
+            {
+                'DESCRIPCION MANO DE OBRA': "INSTALACION DE ATERRIZAJES SECUNDARIOS",
+                'UNIDAD': "UND",
+                'CANTIDAD': 0
+            },
             
             # Partidas de cables
             {
@@ -2062,6 +2221,25 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
 
             return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
     
+    if "INSTALACION DE ATERRIZAJES SECUNDARIOS" in descripcion_upper:
+        cantidad_total = 0
+        
+        # Buscar VARILLA COOPERWELD en materiales instalados
+        for material_key, nodos_qty in materiales_instalados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                
+                # Verificar si es una varilla cooperweld
+                if ("VARILLA COOPERWELD" in material_name and "5/8" in material_name and 
+                    nodo in nodos_qty and nodos_qty[nodo] > 0):
+                    cantidad_total += nodos_qty[nodo]
+                    materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+        
+        # Si se encontró al menos una varilla, asignar mano de obra
+        if cantidad_total > 0:
+            cantidad_mo = cantidad_total
+            return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
+                
     # ======== CASO ESPECIAL: TRANSPORTE VARILLA TIERRA Y/O KIT TIERRA ACERO ========
     if "TRASPORTE VARILLA TIERRA" in descripcion_upper or "TRANSPORTE VARILLA TIERRA" in descripcion_upper:
         # Verificar si hay VARILLA COOPERWELD 5/8″ X 2.4 MT o KIT DE PUESTA A TIERRA en este nodo
@@ -2151,98 +2329,165 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     
     # Verificar si la descripción corresponde a instalación de luminarias
     if "INSTALACION DE LUMINARIAS" in descripcion_upper:
-        # CORRECCIÓN: Contar correctamente los códigos N1 y N2
-        # Contar códigos N1 y N2 para este nodo específico
-        total_codigos = 0
-        
-        # Contar códigos N1
-        for key_codigo, nodos_valores in codigos_n1.items():
-            if nodo in nodos_valores:
-                total_codigos += len(nodos_valores[nodo])
-        
-        # Contar códigos N2
-        for key_codigo, nodos_valores in codigos_n2.items():
-            if nodo in nodos_valores:
-                total_codigos += len(nodos_valores[nodo])
-        
-        # Si hay códigos, usar ese conteo
-        if total_codigos > 0:
-            cantidad_mo = total_codigos
-        # Si no hay códigos pero hay luminarias detectadas, usar ese conteo
-        elif luminarias_instaladas_count > 0:
-            cantidad_mo = luminarias_instaladas_count
-        # Si no hay conteo pero hay evidencia de luminarias, asignar al menos 1
-        elif codigos_encontrados or luminarias_encontradas:
-            cantidad_mo = 1
-        
-        # Buscar materiales complementarios
-        complementos = ["FOTOCELDA", "GRILLETE", "BRAZO"]
-        for comp_material_key, comp_nodos_qty in materiales_instalados.items():
-            if "|" in comp_material_key:
-                comp_material_name = comp_material_key.split("|")[1].upper()
-                if any(comp in comp_material_name for comp in complementos) and nodo in comp_nodos_qty:
-                    qty = comp_nodos_qty[nodo]
-                    materiales_instalados_relacionados.append(f"{comp_material_name} ({qty})")
-        
-        
-        # FORZAR MANO DE OBRA: Si después de todo no se encontró nada, pero estamos en una OT con luminarias, asignar 1 unidad
-        if cantidad_mo == 0:
-            # Verificar si hay algún código o luminaria en cualquier nodo de esta OT
-            hay_luminarias_en_ot = False
-            
-            # Verificar códigos en toda la OT
-            for _, nodos_valores in codigos_n1.items():
-                if any(len(codigos) > 0 for codigos in nodos_valores.values()):
-                    hay_luminarias_en_ot = True
-                    break
-            
-            if not hay_luminarias_en_ot:
-                for _, nodos_valores in codigos_n2.items():
-                    if any(len(codigos) > 0 for codigos in nodos_valores.values()):
-                        hay_luminarias_en_ot = True
-                        break
-            
-            # Verificar materiales de luminarias en toda la OT
-            if not hay_luminarias_en_ot:
+            # CORRECCIÓN: Contar correctamente los códigos N1 y N2
+            # Contar códigos N1 y N2 para este nodo específico
+            total_codigos = 0
+            codigos_encontrados = []
+
+            # Contar códigos N1
+            for key_codigo, nodos_valores in codigos_n1.items():
+                if nodo in nodos_valores:
+                    total_codigos += len(nodos_valores[nodo])
+                    if len(nodos_valores[nodo]) > 0:
+                        materiales_instalados_relacionados.append(f"CÓDIGO N1: {', '.join(nodos_valores[nodo])}")
+                        codigos_encontrados.extend(nodos_valores[nodo])
+
+            # Contar códigos N2
+            for key_codigo, nodos_valores in codigos_n2.items():
+                if nodo in nodos_valores:
+                    total_codigos += len(nodos_valores[nodo])
+                    if len(nodos_valores[nodo]) > 0:
+                        materiales_instalados_relacionados.append(f"CÓDIGO N2: {', '.join(nodos_valores[nodo])}")
+                        codigos_encontrados.extend(nodos_valores[nodo])
+
+            # MODIFICACIÓN: Solo considerar brazos instalados, no retirados
+            usar_canasta = False
+            brazo_encontrado = False
+            tamano_brazo = 0
+            brazos_grandes = []
+            brazos_pequenos = []
+
+            # Verificar si hay brazos INSTALADOS en este nodo específico y determinar su tamaño
+            for material_key, nodos_qty in materiales_instalados.items():
+                if "|" in material_key:
+                    material_name = material_key.split("|")[1].upper()
+                    if "BRAZO" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                        brazo_encontrado = True
+                        # Intentar extraer la longitud del brazo
+                        longitud_match = re.search(r'(\d+)\s*M', material_name)
+                        if longitud_match:
+                            try:
+                                longitud = int(longitud_match.group(1))
+                                tamano_brazo = max(tamano_brazo, longitud)
+                                # Considerar brazos de 3 metros o más como grandes (para canasta)
+                                if longitud >= 3:  # Si el brazo es mayor o igual a 3 metros, usar canasta
+                                    usar_canasta = True
+                                    brazos_grandes.append(f"{material_name} ({nodos_qty[nodo]})")
+                                    materiales_instalados_relacionados.append(f"BRAZO >= 3M: {material_name} ({nodos_qty[nodo]})")
+                                else:
+                                    brazos_pequenos.append(f"{material_name} ({nodos_qty[nodo]})")
+                                    materiales_instalados_relacionados.append(f"BRAZO < 3M: {material_name} ({nodos_qty[nodo]})")
+                            except:
+                                # Si no se puede extraer la longitud pero contiene indicación de tamaño
+                                if "2 1/2" in material_name or "2.5" in material_name:
+                                    usar_canasta = True
+                                    tamano_brazo = max(tamano_brazo, 4)  # Asumimos un valor mayor a 3
+                                    brazos_grandes.append(f"{material_name} ({nodos_qty[nodo]})")
+                                    materiales_instalados_relacionados.append(f"BRAZO GRANDE: {material_name} ({nodos_qty[nodo]})")
+                                # Verificar explícitamente si es un brazo de 3 metros
+                                elif "3 MT" in material_name or "3 MTS" in material_name or "3M" in material_name:
+                                    usar_canasta = True
+                                    tamano_brazo = 3
+                                    brazos_grandes.append(f"{material_name} ({nodos_qty[nodo]})")
+                                    materiales_instalados_relacionados.append(f"BRAZO 3M: {material_name} ({nodos_qty[nodo]})")
+                                else:
+                                    brazos_pequenos.append(f"{material_name} ({nodos_qty[nodo]})")
+                                    materiales_instalados_relacionados.append(f"BRAZO: {material_name} ({nodos_qty[nodo]})")
+                        # Si no se puede extraer la longitud pero contiene indicación de tamaño grande
+                        elif "2 1/2" in material_name or "2.5" in material_name:
+                            usar_canasta = True
+                            tamano_brazo = max(tamano_brazo, 4)  # Asumimos un valor mayor a 3
+                            brazos_grandes.append(f"{material_name} ({nodos_qty[nodo]})")
+                            materiales_instalados_relacionados.append(f"BRAZO GRANDE: {material_name} ({nodos_qty[nodo]})")
+                        # Verificar explícitamente si es un brazo de 3 metros
+                        elif "3 MT" in material_name or "3 MTS" in material_name or "3M" in material_name:
+                            usar_canasta = True
+                            tamano_brazo = 3
+                            brazos_grandes.append(f"{material_name} ({nodos_qty[nodo]})")
+                            materiales_instalados_relacionados.append(f"BRAZO 3M: {material_name} ({nodos_qty[nodo]})")
+                        else:
+                            brazos_pequenos.append(f"{material_name} ({nodos_qty[nodo]})")
+                            materiales_instalados_relacionados.append(f"BRAZO: {material_name} ({nodos_qty[nodo]})")
+
+            # Si hay códigos, usar ese conteo
+            if total_codigos > 0:
+                cantidad_mo = total_codigos
+            # Si no hay códigos pero hay luminarias detectadas en materiales, buscarlas
+            else:
+                luminarias_instaladas_count = 0
+                luminaria_keywords = [
+                    "LUMINARIA", "LAMPARA", "LED", "BOMBILLA", "PROYECTOR", 
+                    "REFLECTOR", "FOCO", "BALASTRO", "LUM"
+                ]
+
                 for material_key, nodos_qty in materiales_instalados.items():
                     if "|" in material_key:
                         material_name = material_key.split("|")[1].upper()
-                        if any(kw in material_name for kw in luminaria_keywords) and sum(nodos_qty.values()) > 0:
-                            hay_luminarias_en_ot = True
-                            break
-            
-            # Si hay luminarias en la OT, forzar la asignación para este nodo
-            if hay_luminarias_en_ot:
-                cantidad_mo = 1
-                materiales_instalados_relacionados.append("LUMINARIA INSTALADA (FORZADO)")
-        
-        # FORZAR MANO DE OBRA PARA CAMIONETA: Si estamos específicamente en la partida de camioneta, asegurar que tenga valor
-        if "CAMIONETA" in descripcion_upper and cantidad_mo == 0:
-            cantidad_mo = 1
-            materiales_instalados_relacionados.append("INSTALACIÓN EN CAMIONETA (FORZADO)")
-        
-        # FORZAR MANO DE OBRA PARA CUALQUIER INSTALACIÓN DE LUMINARIAS SI HAY CÓDIGOS
-        if cantidad_mo == 0 and codigos_n1 and any(len(codigos) > 0 for nodos_valores in codigos_n1.values() for codigos in nodos_valores.values()):
-            cantidad_mo = 1
-            materiales_instalados_relacionados.append("LUMINARIA INSTALADA (FORZADO POR CÓDIGOS N1)")
-        
-        if cantidad_mo == 0 and codigos_n2 and any(len(codigos) > 0 for nodos_valores in codigos_n2.values() for codigos in nodos_valores.values()):
-            cantidad_mo = 1
-            materiales_instalados_relacionados.append("LUMINARIA INSTALADA (FORZADO POR CÓDIGOS N2)")
-        
-        # ÚLTIMO RECURSO: FORZAR SIEMPRE AL MENOS UNA UNIDAD
-        if cantidad_mo == 0:
-            cantidad_mo = 1
-            materiales_instalados_relacionados.append("LUMINARIA INSTALADA (FORZADO ÚLTIMO RECURSO)")
-        
-        return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
-    
-    # Para las otras opciones de instalación, redirigir a la opción de camioneta
-    elif "INSTALACION DE LUMINARIAS EN CANASTA" in descripcion_upper or "INSTALACION DE LUMINARIAS HORIZONTAL ADOSADA" in descripcion_upper:
-        # No asignar mano de obra aquí, para evitar duplicación
-        return 0, [], []
-    
-    # ======== DESMONTAJE DE LUMINARIAS ========
+                        es_luminaria = any(kw in material_name for kw in luminaria_keywords)
+
+                        if es_luminaria and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                            luminarias_instaladas_count += nodos_qty[nodo]
+                            materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+
+                if luminarias_instaladas_count > 0:
+                    cantidad_mo = luminarias_instaladas_count
+                # Si hay brazo pero no hay códigos ni luminarias, asignar al menos 1
+                elif brazo_encontrado:
+                    cantidad_mo = 1
+                    materiales_instalados_relacionados.append("LUMINARIA INSTALADA (INFERIDO POR BRAZO)")
+
+            # CORRECCIÓN IMPORTANTE: Determinar la cantidad para cada tipo de instalación
+            # Si hay brazos grandes y pequeños, dividir la cantidad entre ambos tipos
+            if "CANASTA" in descripcion_upper and usar_canasta:
+                # Si estamos en la partida de canasta y hay brazos grandes, asignar la cantidad
+                # Contar cuántos códigos corresponden a brazos grandes
+                cantidad_canasta = 0
+
+                # Si hay códigos, asignar según la proporción de brazos grandes
+                if total_codigos > 0 and brazos_grandes:
+                    # Si hay más brazos grandes que códigos, usar la cantidad de códigos
+                    cantidad_canasta = min(len(brazos_grandes), total_codigos)
+                elif brazos_grandes:
+                    # Si no hay códigos pero hay brazos grandes, asignar uno por brazo
+                    cantidad_canasta = len(brazos_grandes)
+
+                # Asegurar que haya al menos 1 si hay brazos grandes
+                if brazos_grandes and cantidad_canasta == 0:
+                    cantidad_canasta = 1
+
+                return cantidad_canasta, materiales_instalados_relacionados, materiales_retirados_relacionados
+
+            elif "CAMIONETA" in descripcion_upper and not usar_canasta:
+                # Si estamos en la partida de camioneta/escalera y hay brazos pequeños o no hay brazos
+                cantidad_camioneta = 0
+
+                # Si hay códigos, asignar según la proporción de brazos pequeños o códigos sin brazos
+                if total_codigos > 0:
+                    if brazos_pequenos:
+                        # Si hay más brazos pequeños que códigos, usar la cantidad de códigos
+                        cantidad_camioneta = min(len(brazos_pequenos), total_codigos)
+                    else:
+                        # Si hay códigos pero no hay brazos, asignar todos los códigos a camioneta
+                        cantidad_camioneta = total_codigos
+                elif brazos_pequenos:
+                    # Si no hay códigos pero hay brazos pequeños, asignar uno por brazo
+                    cantidad_camioneta = len(brazos_pequenos)
+
+                # Asegurar que haya al menos 1 si hay brazos pequeños o códigos sin brazos
+                if (brazos_pequenos or (total_codigos > 0 and not usar_canasta)) and cantidad_camioneta == 0:
+                    cantidad_camioneta = 1
+
+                return cantidad_camioneta, materiales_instalados_relacionados, materiales_retirados_relacionados
+
+            elif "HORIZONTAL ADOSADA" in descripcion_upper:
+                # Caso especial para instalación horizontal adosada
+                #return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
+                return 0, [], []
+            else:
+                # Si estamos en una partida que no coincide con el tipo de instalación requerido,
+                # no asignar mano de obra para evitar duplicación
+                return 0, [], []
+        # ======== DESMONTAJE DE LUMINARIAS ========
     
     # Verificar si la descripción corresponde a desmontaje de luminarias
     if "DESMONTAJE DE LUMINARIAS" in descripcion_upper and ("CAMIONETA" in descripcion_upper or "CANASTA" in descripcion_upper):
@@ -2273,30 +2518,63 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                     luminarias_retiradas_count += qty
                     materiales_retirados_relacionados.append(f"{material_name} ({qty})")
         
-        # Determinar si se debe usar canasta o camioneta para el desmontaje
+        # NUEVO: Determinar si se debe usar canasta o camioneta para el desmontaje
+        # basado en el tamaño de los brazos retirados
         usar_canasta_para_desmontaje = False
+        brazos_grandes_retirados = []
+        brazos_pequenos_retirados = []
         
-        # Considerar la altura o tipo de los postes
-        for key in materiales_retirados:
-            if "POSTE" in key.upper() and nodo in materiales_retirados[key]:
-                altura_match = re.search(r'(\d+)\s*M', key.upper())
-                if altura_match:
-                    try:
-                        altura = int(altura_match.group(1))
-                        if altura >= 10:  # Umbral para usar canasta
-                            usar_canasta_para_desmontaje = True
-                            break
-                    except:
-                        pass
+        # Buscar brazos retirados y determinar su tamaño
+        for material_key, nodos_qty in materiales_retirados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if "BRAZO" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                    # Intentar extraer la longitud del brazo
+                    longitud_match = re.search(r'(\d+)\s*M', material_name)
+                    if longitud_match:
+                        try:
+                            longitud = int(longitud_match.group(1))
+                            # Considerar brazos de 3 metros o más como grandes (para canasta)
+                            if longitud >= 3:  # Si el brazo es mayor o igual a 3 metros, usar canasta
+                                usar_canasta_para_desmontaje = True
+                                brazos_grandes_retirados.append(f"{material_name} ({nodos_qty[nodo]})")
+                                materiales_retirados_relacionados.append(f"BRAZO >= 3M: {material_name} ({nodos_qty[nodo]})")
+                            else:
+                                brazos_pequenos_retirados.append(f"{material_name} ({nodos_qty[nodo]})")
+                                materiales_retirados_relacionados.append(f"BRAZO < 3M: {material_name} ({nodos_qty[nodo]})")
+                        except:
+                            pass
+                    # Si no se puede extraer la longitud pero contiene indicación de tamaño grande
+                    elif "2 1/2" in material_name or "2.5" in material_name:
+                        usar_canasta_para_desmontaje = True
+                        brazos_grandes_retirados.append(f"{material_name} ({nodos_qty[nodo]})")
+                        materiales_retirados_relacionados.append(f"BRAZO GRANDE: {material_name} ({nodos_qty[nodo]})")
+                    # Verificar explícitamente si es un brazo de 3 metros
+                    elif "3 MT" in material_name or "3 MTS" in material_name or "3M" in material_name:
+                        usar_canasta_para_desmontaje = True
+                        brazos_grandes_retirados.append(f"{material_name} ({nodos_qty[nodo]})")
+                        materiales_retirados_relacionados.append(f"BRAZO 3M: {material_name} ({nodos_qty[nodo]})")
+                    else:
+                        brazos_pequenos_retirados.append(f"{material_name} ({nodos_qty[nodo]})")
+                        materiales_retirados_relacionados.append(f"BRAZO: {material_name} ({nodos_qty[nodo]})")
         
         # Asignar la mano de obra según el tipo de desmontaje
         # IMPORTANTE: Solo asignar a uno de los tipos para evitar duplicación
         if "DESMONTAJE DE LUMINARIAS EN CANASTA" in descripcion_upper:
             if usar_canasta_para_desmontaje:
                 cantidad_mo = luminarias_retiradas_count
+                # Agregar información sobre los brazos grandes encontrados
+                if brazos_grandes_retirados:
+                    materiales_retirados_relacionados.append(f"DESMONTAJE CON CANASTA POR BRAZOS GRANDES: {', '.join(brazos_grandes_retirados)}")
         elif "DESMONTAJE DE LUMINARIAS EN CAMIONETA" in descripcion_upper:
             if not usar_canasta_para_desmontaje:
                 cantidad_mo = luminarias_retiradas_count
+                # Agregar información sobre los brazos pequeños encontrados
+                if brazos_pequenos_retirados:
+                    materiales_retirados_relacionados.append(f"DESMONTAJE CON CAMIONETA POR BRAZOS PEQUEÑOS: {', '.join(brazos_pequenos_retirados)}")
+                # Si no hay brazos pero hay luminarias, indicar que se usa camioneta por defecto
+                elif luminarias_retiradas_count > 0:
+                    materiales_retirados_relacionados.append("DESMONTAJE CON CAMIONETA (NO SE DETECTARON BRAZOS)")
         
         return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
     
@@ -3118,49 +3396,6 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     # Devolver la cantidad de mano de obra y los materiales relacionados
     return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
 
-def extraer_cantidad(texto):
-    """
-    Extrae la cantidad numérica de un texto.
-    
-    Formatos soportados:
-    - 'Descripción (cantidad)'
-    - 'Descripción cantidad UND'
-    - 'cantidad UND'
-    
-    Args:
-        texto: Texto del que extraer la cantidad
-        
-    Returns:
-        float: Cantidad extraída o 0 si no se encuentra
-    """
-    try:
-        # Caso 1: Formato 'Descripción (cantidad)'
-        if '(' in texto and ')' in texto:
-            cantidad_str = texto.split('(')[-1].rstrip(')')
-            return float(cantidad_str)
-        
-        # Caso 2: Buscar patrón de número seguido de UND
-        palabras = texto.split()
-        for i, palabra in enumerate(palabras):
-            if palabra.upper() in ["UND", "UN", "ML", "M", "KG", "MT", "MTS"]:
-                if i > 0 and palabras[i-1].replace(',', '.').replace('-', '').isdigit():
-                    return float(palabras[i-1].replace(',', '.'))
-                elif i > 0:
-                    try:
-                        return float(palabras[i-1].replace(',', '.'))
-                    except ValueError:
-                        pass
-        
-        # Caso 3: Intentar encontrar cualquier número en el texto
-        import re
-        numeros = re.findall(r'\d+(?:\.\d+)?', texto.replace(',', '.'))
-        if numeros:
-            return float(numeros[0])
-            
-        return 0
-    except ValueError:
-        return 0  # En caso de error, devolver 0
-
 def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_combinados):
     output = BytesIO()
     
@@ -3409,36 +3644,447 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                 partidas_unificadas = []
                 tipo_desmontaje_luminarias = []
                 
-                for partida in plantilla:
-                    descripcion = partida['DESCRIPCION MANO DE OBRA']
-                    # Verificar si es una partida de desmontaje de luminarias
-                    if ("DESMONTAJE" in descripcion.upper() and "LUMINARIA" in descripcion.upper() and 
-                        ("CAMIONETA" in descripcion.upper() or "CANASTA" in descripcion.upper())):
-                        # Guardar la descripción original para referencia
-                        tipo_desmontaje_luminarias.append(descripcion)
-                        # No agregar esta partida a la lista unificada aún
-                    else:
-                        partidas_unificadas.append(partida)
-                
-                # Si hay partidas de desmontaje de luminarias, crear una partida unificada
-                if tipo_desmontaje_luminarias:
-                    partida_unificada = {
-                        'DESCRIPCION MANO DE OBRA': "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA",
-                        'UNIDAD': next((p['UNIDAD'] for p in plantilla if p['DESCRIPCION MANO DE OBRA'] in tipo_desmontaje_luminarias), "UN")
-                    }
-                    partidas_unificadas.append(partida_unificada)
-                
-                # Reemplazar la plantilla original con la unificada
+                #for partida in plantilla:
+                #    descripcion = partida['DESCRIPCION MANO DE OBRA']
+                #    # Verificar si es una partida de desmontaje de luminarias
+                #    if ("DESMONTAJE" in descripcion.upper() and "LUMINARIA" in descripcion.upper() and 
+                #        ("CAMIONETA" in descripcion.upper() or "CANASTA" in descripcion.upper())):
+                #        # Guardar la descripción original para referencia
+                #        tipo_desmontaje_luminarias.append(descripcion)
+                #        # No agregar esta partida a la lista unificada aún
+                #    else:
+                #        partidas_unificadas.append(partida)
+                #
+                ## Si hay partidas de desmontaje de luminarias, crear una partida unificada
+                #if tipo_desmontaje_luminarias:
+                #    partida_unificada = {
+                #        'DESCRIPCION MANO DE OBRA': "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA",
+                #        'UNIDAD': next((p['UNIDAD'] for p in plantilla if p['DESCRIPCION MANO DE OBRA'] in tipo_desmontaje_luminarias), "UN")
+                #    }
+                #    partidas_unificadas.append(partida_unificada)
+                #
+                ## Reemplazar la plantilla original con la unificada
+                #plantilla_original = plantilla
+                #plantilla = partidas_unificadas
                 plantilla_original = plantilla
-                plantilla = partidas_unificadas
-                
                 # Crear un diccionario para almacenar la mano de obra por nodo
                 mano_obra_por_nodo = {nodo: {} for nodo in nodos_ordenados}
+
+                # Crear un diccionario para almacenar información sobre el tipo de brazo por nodo
+                info_brazos_por_nodo = {}
+                
+                # MEJORA: Determinar si hay brazos grandes o pequeños en cada nodo
+                for nodo in nodos_ordenados:
+                    # Verificar si hay brazos INSTALADOS en este nodo específico y determinar su tamaño
+                    usar_canasta = False
+                    brazo_encontrado = False
+                    tamano_brazo = 0
+
+                    # Solo verificar en materiales instalados
+                    for material_key, nodos_qty in materiales_instalados.items():
+                        if "|" in material_key:
+                            material_name = material_key.split("|")[1].upper()
+                            if "BRAZO" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                                brazo_encontrado = True
+                                # Intentar extraer la longitud del brazo
+                                longitud_match = re.search(r'(\d+)\s*M', material_name)
+                                if longitud_match:
+                                    try:
+                                        longitud = int(longitud_match.group(1))
+                                        tamano_brazo = longitud
+                                        # Considerar brazos de 3 metros como grandes (para canasta)
+                                        if longitud >= 3:  # Si el brazo es mayor o igual a 3 metros, usar canasta
+                                            usar_canasta = True
+                                            break
+                                    except:
+                                        pass
+                                # Si no se puede extraer la longitud pero contiene indicación de tamaño grande
+                                elif "2 1/2" in material_name or "2.5" in material_name:
+                                    usar_canasta = True
+                                    tamano_brazo = 4  # Asumimos un valor mayor a 3
+                                    break
+                                # Verificar explícitamente si es un brazo de 3 metros
+                                elif "3 MT" in material_name or "3 MTS" in material_name or "3M" in material_name:
+                                    usar_canasta = True
+                                    tamano_brazo = 3
+                                    break
+                                
+                    # Guardar la información del tipo de brazo para este nodo
+                    info_brazos_por_nodo[nodo] = {
+                        'brazo_encontrado': brazo_encontrado,
+                        'tamano_brazo': tamano_brazo,
+                        'usar_canasta': usar_canasta
+                    }
+                    # Luego verificar en materiales retirados si no se encontró en instalados o si no se determinó usar canasta
+                    if not brazo_encontrado or not usar_canasta:
+                        for material_key, nodos_qty in materiales_retirados.items():
+                            if "|" in material_key:
+                                material_name = material_key.split("|")[1].upper()
+                                if "BRAZO" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                                    brazo_encontrado = True
+                                    # Intentar extraer la longitud del brazo
+                                    longitud_match = re.search(r'(\d+)\s*M', material_name)
+                                    if longitud_match:
+                                        try:
+                                            longitud = int(longitud_match.group(1))
+                                            tamano_brazo = max(tamano_brazo, longitud)
+                                            # CORRECCIÓN: Considerar brazos de 3 metros como grandes (para canasta)
+                                            if longitud >= 3:  # Si el brazo es mayor o igual a 3 metros, usar canasta
+                                                usar_canasta = True
+                                                break
+                                        except:
+                                            pass
+                                    # Si no se puede extraer la longitud pero contiene indicación de tamaño grande
+                                    elif "2 1/2" in material_name or "2.5" in material_name:
+                                        usar_canasta = True
+                                        tamano_brazo = max(tamano_brazo, 4)  # Asumimos un valor mayor a 3
+                                        break
+                                    
+                    # Guardar la información del tipo de brazo para este nodo
+                    info_brazos_por_nodo[nodo] = {
+                        'brazo_encontrado': brazo_encontrado,
+                        'tamano_brazo': tamano_brazo,
+                        'usar_canasta': usar_canasta
+                    }
+                    
+                    # Inicializar el bloque de instalación de luminarias si no existe
+                    if "Instalación luminarias" not in mano_obra_por_nodo[nodo]:
+                        mano_obra_por_nodo[nodo]["Instalación luminarias"] = []
+                    
+                    # Verificar si hay códigos en este nodo
+                    tiene_codigos = False
+                    for _, nodos_valores in info.get('codigos_n1', {}).items():
+                        if nodo in nodos_valores and len(nodos_valores[nodo]) > 0:
+                            tiene_codigos = True
+                            break
+                        
+                    if not tiene_codigos:
+                        for _, nodos_valores in info.get('codigos_n2', {}).items():
+                            if nodo in nodos_valores and len(nodos_valores[nodo]) > 0:
+                                tiene_codigos = True
+                                break
+                            
+                    # Si hay códigos o se encontró un brazo, agregar la partida correspondiente
+                    if tiene_codigos or brazo_encontrado:
+                        # Elegir la descripción adecuada según el tipo de brazo
+                        desc_instalacion = "INSTALACION DE LUMINARIAS EN CANASTA" if usar_canasta else "INSTALACION DE LUMINARIAS EN CAMIONETA"
+                        
+                        # Verificar si ya existe esta partida
+                        ya_existe = False
+                        for partida in mano_obra_por_nodo[nodo].get("Instalación luminarias", []):
+                            if partida['descripcion'] == desc_instalacion:
+                                ya_existe = True
+                                break
+                            
+                        # Solo agregar si no existe
+                        if not ya_existe:
+                            # Obtener los códigos para mostrar en los materiales
+                            codigos_texto = []
+                            for key_codigo, nodos_valores in info.get('codigos_n1', {}).items():
+                                if nodo in nodos_valores and len(nodos_valores[nodo]) > 0:
+                                    codigos_texto.append(f"CÓDIGO N1: {', '.join(nodos_valores[nodo])}")
+                            
+                            for key_codigo, nodos_valores in info.get('codigos_n2', {}).items():
+                                if nodo in nodos_valores and len(nodos_valores[nodo]) > 0:
+                                    codigos_texto.append(f"CÓDIGO N2: {', '.join(nodos_valores[nodo])}")
+                            
+                            # Preparar información sobre el brazo
+                            info_brazo = ""
+                            if brazo_encontrado:
+                                if usar_canasta:
+                                    info_brazo = f"BRAZO GRANDE ({tamano_brazo}M)"
+                                else:
+                                    info_brazo = f"BRAZO PEQUEÑO ({tamano_brazo}M)"
+                            
+                            # Combinar información de códigos y brazos
+                            materiales = []
+                            if codigos_texto:
+                                materiales.extend(codigos_texto)
+                            if info_brazo:
+                                materiales.append(info_brazo)
+                            
+                            # Si no hay información específica, agregar un mensaje genérico
+                            if not materiales:
+                                materiales = ["LUMINARIA INSTALADA"]
+                            
+                            # Agregar la partida
+                            mano_obra_por_nodo[nodo]["Instalación luminarias"].append({
+                                'descripcion': desc_instalacion,
+                                'unidad': "UND",
+                                'cantidad': max(len(codigos_texto), 1),  # Al menos 1 si hay brazos
+                                'materiales': ""
+                                #'materiales': "INST: " + ", ".join(materiales)
+                            })
+                
+                info_desmontaje_por_nodo = {}
+
+                for nodo in nodos_ordenados:
+                    # Verificar si hay brazos RETIRADOS en este nodo específico y determinar su tamaño
+                    usar_canasta_desmontaje = False
+                    brazo_retirado_encontrado = False
+                    tamano_brazo_retirado = 0
+                    luminarias_retiradas = 0
+                
+                    # Contar luminarias retiradas
+                    for material_key, nodos_qty in materiales_retirados.items():
+                        if "|" in material_key:
+                            material_name = material_key.split("|")[1].upper()
+                            # Verificar si es una luminaria retirada
+                            es_luminaria_retirada = (
+                                "LUMINARIA" in material_name or 
+                                "LUM" in material_name or
+                                "LED" in material_name or
+                                "LAMP" in material_name or
+                                "FOCO" in material_name or
+                                "RETIRADA" in material_name
+                            )
+                            if es_luminaria_retirada and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                                luminarias_retiradas += nodos_qty[nodo]
+                
+                    # Verificar brazos retirados
+                    for material_key, nodos_qty in materiales_retirados.items():
+                        if "|" in material_key:
+                            material_name = material_key.split("|")[1].upper()
+                            if "BRAZO" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                                brazo_retirado_encontrado = True
+                                # Intentar extraer la longitud del brazo
+                                longitud_match = re.search(r'(\d+)\s*M', material_name)
+                                if longitud_match:
+                                    try:
+                                        longitud = int(longitud_match.group(1))
+                                        tamano_brazo_retirado = longitud
+                                        # Considerar brazos de 3 metros como grandes (para canasta)
+                                        if longitud >= 3:  # Si el brazo es mayor o igual a 3 metros, usar canasta
+                                            usar_canasta_desmontaje = True
+                                            break
+                                    except:
+                                        pass
+                                # Si no se puede extraer la longitud pero contiene indicación de tamaño grande
+                                elif "2 1/2" in material_name or "2.5" in material_name:
+                                    usar_canasta_desmontaje = True
+                                    tamano_brazo_retirado = 4  # Asumimos un valor mayor a 3
+                                    break
+                                # Verificar explícitamente si es un brazo de 3 metros
+                                elif "3 MT" in material_name or "3 MTS" in material_name or "3M" in material_name:
+                                    usar_canasta_desmontaje = True
+                                    tamano_brazo_retirado = 3
+                                    break
+                                
+                    # Guardar la información del desmontaje para este nodo
+                    info_desmontaje_por_nodo[nodo] = {
+                        'brazo_retirado_encontrado': brazo_retirado_encontrado,
+                        'tamano_brazo_retirado': tamano_brazo_retirado,
+                        'usar_canasta_desmontaje': usar_canasta_desmontaje,
+                        'luminarias_retiradas': luminarias_retiradas
+                    }
+                    
+                    # Inicializar el bloque de desmontaje de luminarias si no existe
+                    if "Desmontaje / Transporte" not in mano_obra_por_nodo[nodo]:
+                        mano_obra_por_nodo[nodo]["Desmontaje / Transporte"] = []
+                    
+                    # Si hay luminarias retiradas, agregar la partida correspondiente
+                    if luminarias_retiradas > 0:
+                        # Elegir la descripción adecuada según el tipo de brazo
+                        desc_desmontaje = "DESMONTAJE DE LUMINARIAS EN CANASTA" if usar_canasta_desmontaje else "DESMONTAJE DE LUMINARIAS EN CAMIONETA"
+                        
+                        # MODIFICACIÓN: Separar desmontajes por tipo (CANASTA vs CAMIONETA)
+                # Primero, recopilar información sobre brazos retirados y luminarias por nodo
+                brazos_grandes_retirados_por_nodo = {}
+                brazos_pequenos_retirados_por_nodo = {}
+                luminarias_retiradas_por_nodo = {}
+                
+                # Recopilar información sobre brazos retirados por nodo
+                for nodo in nodos_ordenados:
+                    brazos_grandes_retirados_por_nodo[nodo] = []
+                    brazos_pequenos_retirados_por_nodo[nodo] = []
+                    luminarias_retiradas_por_nodo[nodo] = []
+                
+                    # Buscar luminarias retiradas en este nodo
+                    for material_key, nodos_qty in materiales_retirados.items():
+                        if "|" in material_key:
+                            material_name = material_key.split("|")[1].upper()
+                            # Verificar si es una luminaria retirada
+                            es_luminaria_retirada = (
+                                "LUMINARIA" in material_name or 
+                                "LUM" in material_name or
+                                "LED" in material_name or
+                                "LAMP" in material_name or
+                                "FOCO" in material_name or
+                                "RETIRADA" in material_name
+                            )
+                            if es_luminaria_retirada and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                                luminarias_retiradas_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                
+                    # Buscar brazos retirados en materiales retirados y clasificarlos por tamaño
+                    for material_key, nodos_qty in materiales_retirados.items():
+                        if "|" in material_key:
+                            material_name = material_key.split("|")[1].upper()
+                            if "BRAZO" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                                # Intentar extraer la longitud del brazo
+                                longitud_match = re.search(r'(\d+)\s*M', material_name)
+                                if longitud_match:
+                                    try:
+                                        longitud = int(longitud_match.group(1))
+                                        if longitud >= 3:  # Si el brazo es mayor a 3 metros, usar canasta
+                                            brazos_grandes_retirados_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                        else:
+                                            brazos_pequenos_retirados_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                    except:
+                                        # Si no se puede extraer la longitud pero contiene indicación de tamaño
+                                        if "2 1/2" in material_name or "2.5" in material_name:
+                                            brazos_grandes_retirados_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                        else:
+                                            brazos_pequenos_retirados_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                # Si no se puede extraer la longitud pero contiene indicación de tamaño grande
+                                elif "2 1/2" in material_name or "2.5" in material_name:
+                                    brazos_grandes_retirados_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                # Verificar explícitamente si es un brazo de 3 metros
+                                elif "3 MT" in material_name or "3 MTS" in material_name or "3M" in material_name:
+                                    brazos_grandes_retirados_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                else:
+                                    brazos_pequenos_retirados_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                
+                # Crear fila para DESMONTAJE DE LUMINARIAS EN CANASTA
+                total_canasta_desmontaje = 0
+                luminarias_canasta_desmontaje = set()
+                brazos_canasta_desmontaje = set()
+                
+                # Crear fila para DESMONTAJE DE LUMINARIAS EN CAMIONETA
+                total_camioneta_desmontaje = 0
+                luminarias_camioneta_desmontaje = set()
+                brazos_camioneta_desmontaje = set()
+                
+                # Procesar cada nodo para determinar qué tipo de desmontaje necesita
+                for nodo in nodos_ordenados:
+                    # Si hay brazos grandes retirados, asignar a CANASTA
+                    if brazos_grandes_retirados_por_nodo[nodo]:
+                        # La cantidad es el número de luminarias retiradas o al menos 1 si hay brazos grandes
+                        cantidad_luminarias = len(luminarias_retiradas_por_nodo[nodo])
+                        cantidad_nodo = max(cantidad_luminarias, 1) if brazos_grandes_retirados_por_nodo[nodo] else 0
+                        
+                        if cantidad_nodo > 0:
+                            total_canasta_desmontaje += cantidad_nodo
+                
+                            # Agregar luminarias a la lista para CANASTA
+                            for luminaria in luminarias_retiradas_por_nodo[nodo]:
+                                luminarias_canasta_desmontaje.add(luminaria)
+                
+                            # Agregar brazos a la lista de brazos para CANASTA
+                            for brazo in brazos_grandes_retirados_por_nodo[nodo]:
+                                brazos_canasta_desmontaje.add(brazo)
+                
+                    # Si hay brazos pequeños o luminarias sin brazos grandes, asignar a CAMIONETA
+                    elif brazos_pequenos_retirados_por_nodo[nodo] or luminarias_retiradas_por_nodo[nodo]:
+                        # La cantidad es el número de luminarias retiradas o al menos 1 si hay brazos pequeños
+                        cantidad_luminarias = len(luminarias_retiradas_por_nodo[nodo])
+                        cantidad_nodo = max(cantidad_luminarias, 1) if brazos_pequenos_retirados_por_nodo[nodo] or luminarias_retiradas_por_nodo[nodo] else 0
+                        
+                        if cantidad_nodo > 0:
+                            total_camioneta_desmontaje += cantidad_nodo
+                
+                            # Agregar luminarias a la lista para CAMIONETA
+                            for luminaria in luminarias_retiradas_por_nodo[nodo]:
+                                luminarias_camioneta_desmontaje.add(luminaria)
+                
+                            # Agregar brazos a la lista de brazos para CAMIONETA
+                            for brazo in brazos_pequenos_retirados_por_nodo[nodo]:
+                                brazos_camioneta_desmontaje.add(brazo)
+                
+                # Crear fila para DESMONTAJE DE LUMINARIAS EN CANASTA si hay cantidad
+                #if total_canasta_desmontaje > 0:
+                #    descripcion = "DESMONTAJE DE LUMINARIAS EN CANASTA"
+                #    unidad = "UND"
+                #
+                #    # Crear resumen de materiales
+                #    todos_materiales = []
+                #    if luminarias_canasta_desmontaje:
+                #        todos_materiales.append(f"RET: LUMINARIAS: {', '.join(sorted(luminarias_canasta_desmontaje))}")
+                #    if brazos_canasta_desmontaje:
+                #        todos_materiales.append(f"RET: BRAZOS: {', '.join(sorted(brazos_canasta_desmontaje))}")
+                #
+                #    # Crear la fila
+                #    fila_canasta_desmontaje = [descripcion, unidad, total_canasta_desmontaje, ''] + [''] * num_nodos
+                #
+                #    # Agregar materiales en la columna de fecha
+                #    if todos_materiales:
+                #        fila_canasta_desmontaje[3] = "\n".join(todos_materiales)
+                #
+                #    # Para cada nodo, agregar la cantidad correspondiente
+                #    for i, nodo in enumerate(nodos_ordenados):
+                #        if brazos_grandes_retirados_por_nodo[nodo]:
+                #            # La cantidad es el número de luminarias o al menos 1 si hay brazos grandes
+                #            cantidad_luminarias = len(luminarias_retiradas_por_nodo[nodo])
+                #            cantidad_nodo = max(cantidad_luminarias, 1)
+                #
+                #            # Crear texto con materiales para este nodo
+                #            materiales_nodo = []
+                #            if luminarias_retiradas_por_nodo[nodo]:
+                #                materiales_nodo.append(f"RET: LUMINARIAS: {', '.join(luminarias_retiradas_por_nodo[nodo])}")
+                #            if brazos_grandes_retirados_por_nodo[nodo]:
+                #                materiales_nodo.append(f"RET: BRAZOS: {', '.join(brazos_grandes_retirados_por_nodo[nodo])}")
+                #
+                #            # Formatear contenido: cantidad + materiales
+                #            contenido = f"{cantidad_nodo}"
+                #            if materiales_nodo:
+                #                contenido += f"\n{chr(10).join(materiales_nodo)}"
+                #
+                #            fila_canasta_desmontaje[4 + i] = contenido
+                #
+                #    # Agregar la fila a la lista de filas
+                #    filas.append(fila_canasta_desmontaje)
+                
+                # Crear fila para DESMONTAJE DE LUMINARIAS EN CAMIONETA si hay cantidad
+                #if total_camioneta_desmontaje > 0:
+                #    descripcion = "DESMONTAJE DE LUMINARIAS EN CAMIONETA"
+                #    unidad = "UND"
+                #
+                #    # Crear resumen de materiales
+                #    todos_materiales = []
+                #    if luminarias_camioneta_desmontaje:
+                #        todos_materiales.append(f"RET: LUMINARIAS: {', '.join(sorted(luminarias_camioneta_desmontaje))}")
+                #    if brazos_camioneta_desmontaje:
+                #        todos_materiales.append(f"RET: BRAZOS: {', '.join(sorted(brazos_camioneta_desmontaje))}")
+                #
+                #    # Crear la fila
+                #    fila_camioneta_desmontaje = [descripcion, unidad, total_camioneta_desmontaje, ''] + [''] * num_nodos
+                #
+                #    # Agregar materiales en la columna de fecha
+                #    if todos_materiales:
+                #        fila_camioneta_desmontaje[3] = "\n".join(todos_materiales)
+                #
+                #    # Para cada nodo, agregar la cantidad correspondiente
+                #    for i, nodo in enumerate(nodos_ordenados):
+                #        if (brazos_pequenos_retirados_por_nodo[nodo] or luminarias_retiradas_por_nodo[nodo]) and not brazos_grandes_retirados_por_nodo[nodo]:
+                #            # La cantidad es el número de luminarias o al menos 1 si hay brazos pequeños
+                #            cantidad_luminarias = len(luminarias_retiradas_por_nodo[nodo])
+                #            cantidad_nodo = max(cantidad_luminarias, 1) if brazos_pequenos_retirados_por_nodo[nodo] or luminarias_retiradas_por_nodo[nodo] else 0
+                #
+                #            if cantidad_nodo > 0:
+                #                # Crear texto con materiales para este nodo
+                #                materiales_nodo = []
+                #                if luminarias_retiradas_por_nodo[nodo]:
+                #                    materiales_nodo.append(f"RET: LUMINARIAS: {', '.join(luminarias_retiradas_por_nodo[nodo])}")
+                #                if brazos_pequenos_retirados_por_nodo[nodo]:
+                #                    materiales_nodo.append(f"RET: BRAZOS: {', '.join(brazos_pequenos_retirados_por_nodo[nodo])}")
+                #
+                #                # Formatear contenido: cantidad + materiales
+                #                contenido = f"{cantidad_nodo}"
+                #                if materiales_nodo:
+                #                    contenido += f"\n{chr(10).join(materiales_nodo)}"
+                #
+                #                fila_camioneta_desmontaje[4 + i] = contenido
+                #
+                #    # Agregar la fila a la lista de filas
+                #    filas.append(fila_camioneta_desmontaje)
                 
                 # Para cada nodo, calcular la mano de obra necesaria
                 for nodo in nodos_ordenados:
                     # Para cada bloque de partidas
                     for titulo_bloque, keywords_mo, keywords_mat in bloques:
+                        # Si es el bloque de instalación de luminarias, ya lo procesamos antes
+                        if titulo_bloque == "Instalación luminarias":
+                            continue
+                            
                         # Filtrar partidas del bloque actual
                         partidas_filtradas = [
                             item for item in plantilla
@@ -3451,64 +4097,14 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                             unidad = partida['UNIDAD']
                             
                             # Caso especial para DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA
-                            cantidad_mo = 0
-                            materiales_inst = []
-                            materiales_ret = []
-                            
-                            if descripcion == "DESMONTAJE DE LUMINARIAS CANASTA/ESCALERA":
-                                # Calcular la cantidad sumando todos los tipos de desmontaje
-                                for desc_original in tipo_desmontaje_luminarias:
-                                    cant_temp, mat_inst_temp, mat_ret_temp = calcular_cantidad_mano_obra(
-                                        desc_original,
-                                        materiales_instalados,
-                                        materiales_retirados,
-                                        nodo,
-                                        info.get('codigos_n1', {}),
-                                        info.get('codigos_n2', {})
-                                    )
-                                    cantidad_mo += cant_temp
-                                    materiales_inst.extend(mat_inst_temp)
-                                    materiales_ret.extend(mat_ret_temp)
-                                
-                                # Eliminar duplicados en las listas de materiales
-                                materiales_inst = list(set(materiales_inst))
-                                materiales_ret = list(set(materiales_ret))
-                            else:
-                                # Procesamiento normal para otras partidas
-                                cantidad_mo, materiales_inst, materiales_ret = calcular_cantidad_mano_obra(
-                                    descripcion,
-                                    materiales_instalados,
-                                    materiales_retirados,
-                                    nodo,
-                                    info.get('codigos_n1', {}),
-                                    info.get('codigos_n2', {})
-                                )
-                            
-                            # IMPORTANTE: Forzar la aparición de instalación de luminarias
-                            if "INSTALACION DE LUMINARIAS" in descripcion.upper():
-                                #print(f"DEBUG: Calculando mano de obra para {descripcion} en nodo {nodo}")
-                                #print(f"DEBUG: Cantidad calculada: {cantidad_mo}")
-                                #print(f"DEBUG: Materiales instalados: {materiales_inst}")
-                                
-                                # Verificar códigos N1/N2 para este nodo
-                                #for key_codigo, nodos_valores in info.get('codigos_n1', {}).items():
-                                #    if nodo in nodos_valores and len(nodos_valores[nodo]) > 0:
-                                #        print(f"DEBUG: Nodo {nodo} tiene códigos N1: {nodos_valores[nodo]}")
-                                #
-                                #for key_codigo, nodos_valores in info.get('codigos_n2', {}).items():
-                                #    if nodo in nodos_valores and len(nodos_valores[nodo]) > 0:
-                                #        print(f"DEBUG: Nodo {nodo} tiene códigos N2: {nodos_valores[nodo]}")
-                                #
-                                if not hay_codigos_nodo:
-                                    for _, nodos_valores in info.get('codigos_n2', {}).items():
-                                        if nodo in nodos_valores and len(nodos_valores[nodo]) > 0:
-                                            hay_codigos_nodo = True
-                                            break
-                                
-                                # Si hay códigos pero no se calculó cantidad, forzar a 1
-                                if hay_codigos_nodo and cantidad_mo == 0:
-                                    cantidad_mo = 1
-                                    materiales_inst.append("LUMINARIA INSTALADA (FORZADO)")
+                            cantidad_mo, materiales_inst, materiales_ret = calcular_cantidad_mano_obra(
+                                descripcion,
+                                materiales_instalados,
+                                materiales_retirados,
+                                nodo,
+                                info.get('codigos_n1', {}),
+                                info.get('codigos_n2', {})
+                            )
                             
                             # Solo agregar partidas con cantidad > 0
                             if cantidad_mo > 0:
@@ -3528,7 +4124,8 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                                     'descripcion': descripcion,
                                     'unidad': unidad,
                                     'cantidad': cantidad_mo,
-                                    'materiales': "\n".join(materiales_texto)
+                                    'materiales': ""
+                                    #'materiales': "\n".join(materiales_texto)
                                 })
                 
                 # IMPORTANTE: Forzar la aparición de instalación de luminarias en al menos un nodo
@@ -3537,14 +4134,12 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                 for _, nodos_valores in info.get('codigos_n1', {}).items():
                     if any(len(codigos) > 0 for codigos in nodos_valores.values()):
                         hay_codigos_ot = True
-                        #print(f"INFO: Encontrados códigos N1 en la OT {ot}")
                         break
                 
                 if not hay_codigos_ot:
                     for _, nodos_valores in info.get('codigos_n2', {}).items():
                         if any(len(codigos) > 0 for codigos in nodos_valores.values()):
                             hay_codigos_ot = True
-                            #print(f"INFO: Encontrados códigos N2 en la OT {ot}")
                             break
                 
                 # Verificar si ya hay alguna partida de instalación de luminarias
@@ -3554,18 +4149,19 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                         for partida in mano_obra_por_nodo[nodo]["Instalación luminarias"]:
                             if "INSTALACION DE LUMINARIAS" in partida['descripcion'].upper():
                                 hay_instalacion_luminarias = True
-                                #print(f"INFO: Ya existe instalación de luminarias en nodo {nodo}")
                                 break
                         if hay_instalacion_luminarias:
                             break
                 
                 # FORZAR la aparición de instalación de luminarias si hay códigos pero no hay instalación
-                if hay_codigos_ot and not hay_instalacion_luminarias:
-                    #print(f"INFO: Forzando instalación de luminarias en OT {ot}")
-                    # Forzar en TODOS los nodos que tengan códigos
+                if hay_codigos_ot and not hay_instalacion_luminarias and nodos_ordenados:
+                    # Determinar si hay algún nodo con brazo grande en la OT
+                    hay_brazo_grande_en_ot = any(info['usar_canasta'] for info in info_brazos_por_nodo.values())
+                    
+                    # Elegir el primer nodo que tenga códigos
+                    nodo_con_codigos = None
                     for nodo in nodos_ordenados:
                         tiene_codigos = False
-                        # Verificar si este nodo tiene códigos
                         for _, nodos_valores in info.get('codigos_n1', {}).items():
                             if nodo in nodos_valores and len(nodos_valores[nodo]) > 0:
                                 tiene_codigos = True
@@ -3577,74 +4173,45 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                                     tiene_codigos = True
                                     break
                         
-                        # Si este nodo tiene códigos, forzar la instalación
                         if tiene_codigos:
-                            if "Instalación luminarias" not in mano_obra_por_nodo[nodo]:
-                                mano_obra_por_nodo[nodo]["Instalación luminarias"] = []
-                            
-                            # Buscar la descripción de instalación en camioneta
-                            desc_instalacion = "INSTALACION DE LUMINARIAS EN CAMIONETA"
-                            
-                            # Verificar si ya existe esta partida
-                            ya_existe = False
-                            for partida in mano_obra_por_nodo[nodo].get("Instalación luminarias", []):
-                                if partida['descripcion'] == desc_instalacion:
-                                    ya_existe = True
-                                    break
-                            
-                            # Solo agregar si no existe
-                            if not ya_existe:
-                                # Obtener los códigos para mostrarlos en los materiales
-                                codigos_texto = []
-                                #for key_codigo, nodos_valores in info.get('codigos_n1', {}).items():
-                                #    if nodo in nodos_valores and len(nodos_valores[nodo]) > 0:
-                                #        codigos_texto.append(f"CÓDIGO N1: {', '.join(nodos_valores[nodo])}")
-                                #
-                                #for key_codigo, nodos_valores in info.get('codigos_n2', {}).items():
-                                #    if nodo in nodos_valores and len(nodos_valores[nodo]) > 0:
-                                #        codigos_texto.append(f"CÓDIGO N2: {', '.join(nodos_valores[nodo])}")
-                                #
-                                #materiales = "INST: " + (", ".join(codigos_texto) if codigos_texto else "LUMINARIA INSTALADA (FORZADO)")
-                                
-                                # Agregar la partida forzada
-                                mano_obra_por_nodo[nodo]["Instalación luminarias"].append({
-                                    'descripcion': desc_instalacion,
-                                    'unidad': "UND",
-                                    'cantidad': 1,
-                                    'materiales': ""
-                                })
-                                #print(f"INFO: Forzada instalación de luminarias en nodo {nodo}")
-                
-                # Si hay códigos pero no hay instalación de luminarias, forzarla en el primer nodo
-                if hay_codigos_ot and not hay_instalacion_luminarias and nodos_ordenados:
-                    primer_nodo = nodos_ordenados[0]
-                    if "Instalación luminarias" not in mano_obra_por_nodo[primer_nodo]:
-                        mano_obra_por_nodo[primer_nodo]["Instalación luminarias"] = []
+                            nodo_con_codigos = nodo
+                            break
                     
-                    # Buscar la descripción de instalación en camioneta
-                    desc_instalacion = "INSTALACION DE LUMINARIAS EN CAMIONETA"
+                    # Si no hay nodo con códigos, usar el primer nodo
+                    if not nodo_con_codigos and nodos_ordenados:
+                        nodo_con_codigos = nodos_ordenados[0]
                     
-                    # Agregar la partida forzada
-                    mano_obra_por_nodo[primer_nodo]["Instalación luminarias"].append({
-                        'descripcion': desc_instalacion,
-                        'unidad': "UND",
-                        'cantidad': 1,
-                        'materiales': ""
-                    })
-                
-                # Crear filas para cada bloque de mano de obra
-                if hay_codigos_ot:
-                    # Verificar si ya existe el bloque de instalación de luminarias
-                    if not any("Instalación luminarias" in mano_obra_por_nodo[nodo] for nodo in nodos_ordenados):
-                        #print(f"INFO: Forzando bloque de instalación de luminarias en OT {ot}")
-                        # Crear el bloque si no existe
-                        primer_nodo = nodos_ordenados[0]
-                        mano_obra_por_nodo[primer_nodo]["Instalación luminarias"] = [{
-                            'descripcion': "INSTALACION DE LUMINARIAS EN CAMIONETA",
+                    if nodo_con_codigos:
+                        # Inicializar el bloque si no existe
+                        if "Instalación luminarias" not in mano_obra_por_nodo[nodo_con_codigos]:
+                            mano_obra_por_nodo[nodo_con_codigos]["Instalación luminarias"] = []
+                        
+                        # Determinar si usar canasta basado en la presencia de brazos grandes en la OT
+                        desc_instalacion = "INSTALACION DE LUMINARIAS EN CANASTA" if hay_brazo_grande_en_ot else "INSTALACION DE LUMINARIAS EN CAMIONETA"
+                        
+                        # Obtener los códigos para mostrar
+                        codigos_texto = []
+                        for key_codigo, nodos_valores in info.get('codigos_n1', {}).items():
+                            for nodo, codigos in nodos_valores.items():
+                                if codigos:
+                                    codigos_texto.append(f"CÓDIGO N1: {', '.join(codigos)}")
+                        
+                        for key_codigo, nodos_valores in info.get('codigos_n2', {}).items():
+                            for nodo, codigos in nodos_valores.items():
+                                if codigos:
+                                    codigos_texto.append(f"CÓDIGO N2: {', '.join(codigos)}")
+                        
+                        # Formatear materiales
+                        #materiales = "INST: " + (", ".join(codigos_texto) if codigos_texto else "LUMINARIA INSTALADA (FORZADO)")
+                        
+                        # Agregar la partida forzada
+                        mano_obra_por_nodo[nodo_con_codigos]["Instalación luminarias"].append({
+                            'descripcion': desc_instalacion,
                             'unidad': "UND",
                             'cantidad': 1,
-                            'materiales': ""
-                        }]
+                            'materilaes': ""
+                            #'materiales': materiales
+                        })
                 
                 # Crear filas para cada bloque de mano de obra
                 for titulo_bloque, _, _ in bloques:
@@ -3652,127 +4219,242 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                     if titulo_bloque == "Instalación luminarias" and hay_codigos_ot:
                         # Siempre agregar este bloque si hay códigos
                         filas.append([f"BLOQUE: {titulo_bloque}", '', '', ''] + [''] * num_nodos)
-                        
-                        # Forzar la aparición de la partida de instalación de luminarias
-                        descripcion = "INSTALACION DE LUMINARIAS EN CAMIONETA"
-                        unidad = "UND"
-                        
-                        # CORRECCIÓN: Contar correctamente los códigos N1 y N2
-                        # Contar el total de códigos N1 y N2 en toda la OT
-                        total_codigos_n1 = sum(
-                            len(codigos) 
-                            for nodos_valores in info.get('codigos_n1', {}).values() 
-                            for nodo, codigos in nodos_valores.items() 
-                            if nodo in nodos_ordenados
-                        )
-                        
-                        total_codigos_n2 = sum(
-                            len(codigos) 
-                            for nodos_valores in info.get('codigos_n2', {}).values() 
-                            for nodo, codigos in nodos_valores.items() 
-                            if nodo in nodos_ordenados
-                        )
-                        
-                        # La cantidad total debe ser la suma de códigos N1 y N2
-                        cantidad_total = total_codigos_n1 + total_codigos_n2
-                        
-                        # Si no hay códigos pero hay partidas calculadas, usar ese valor
-                        if cantidad_total == 0:
-                            for nodo in nodos_ordenados:
-                                if titulo_bloque in mano_obra_por_nodo[nodo]:
-                                    for partida in mano_obra_por_nodo[nodo][titulo_bloque]:
-                                        if "INSTALACION DE LUMINARIAS" in partida['descripcion'].upper():
-                                            cantidad_total += partida['cantidad']
-                        
-                        # Asegurar que haya al menos 1 unidad
-                        if cantidad_total == 0:
-                            cantidad_total = 1
-                            
-                        #print(f"INFO: Total códigos N1: {total_codigos_n1}, Total códigos N2: {total_codigos_n2}")
-                        #print(f"INFO: Cantidad total de luminarias: {cantidad_total}")
-                        
-                        # Recopilar todos los materiales asociados
-                        todos_materiales = []
+
+                        # MODIFICACIÓN: Separar instalaciones por tipo (CANASTA vs CAMIONETA)
+                        # Primero, recopilar información sobre brazos y códigos por nodo
+                        brazos_grandes_por_nodo = {}
+                        brazos_pequenos_por_nodo = {}
+                        codigos_por_nodo = {}
+
+                        # Recopilar información sobre brazos por nodo
                         for nodo in nodos_ordenados:
-                            if titulo_bloque in mano_obra_por_nodo[nodo]:
-                                for partida in mano_obra_por_nodo[nodo][titulo_bloque]:
-                                    if "INSTALACION DE LUMINARIAS" in partida['descripcion'].upper() and partida['materiales']:
-                                        materiales_lineas = partida['materiales'].split('\n')
-                                        for linea in materiales_lineas:
-                                            if linea not in todos_materiales:
-                                                todos_materiales.append(linea)
-                        
-                        # Si no hay materiales, agregar un mensaje forzado
-                        if not todos_materiales:
-                            # Buscar códigos para mostrar
-                            codigos_texto = []
-                            #for key_codigo, nodos_valores in info.get('codigos_n1', {}).items():
-                            #    for nodo, codigos in nodos_valores.items():
-                            #        if codigos:
-                            #            codigos_texto.append(f"CÓDIGO N1: {', '.join(codigos)}")
-                            #
-                            #for key_codigo, nodos_valores in info.get('codigos_n2', {}).items():
-                            #    for nodo, codigos in nodos_valores.items():
-                            #        if codigos:
-                            #            codigos_texto.append(f"CÓDIGO N2: {', '.join(codigos)}")
-                            #
-                            #if codigos_texto:
-                            #    todos_materiales.append("INST: " + ", ".join(codigos_texto))
-                            #else:
-                            #    todos_materiales.append("INST: LUMINARIA INSTALADA (FORZADO)")
-                        
-                        # Crear la fila con la descripción, unidad y cantidad total
-                        fila_mo = [descripcion, unidad, cantidad_total, ''] + [''] * num_nodos
-                        
-                        # Agregar materiales en la columna de fecha
-                        fila_mo[3] = "\n".join(todos_materiales)
-                        
-                        # Para cada nodo, agregar la información de mano de obra
-                        for i, nodo in enumerate(nodos_ordenados):
-                            # CORRECCIÓN: Para instalación de luminarias, contar códigos directamente
-                            # Contar códigos N1 y N2 para este nodo específico
-                            total_codigos_nodo = 0
-                            codigos_texto = []
-                            
-                            # Contar códigos N1
+                            brazos_grandes_por_nodo[nodo] = []
+                            brazos_pequenos_por_nodo[nodo] = []
+                            codigos_por_nodo[nodo] = []
+
+                            # Contar códigos para este nodo
                             for key_codigo, nodos_valores in info.get('codigos_n1', {}).items():
                                 if nodo in nodos_valores and nodos_valores[nodo]:
-                                    total_codigos_nodo += len(nodos_valores[nodo])
-                                    codigos_texto.append(f"CÓDIGO N1: {', '.join(nodos_valores[nodo])}")
-                            
-                            # Contar códigos N2
+                                    codigos_por_nodo[nodo].extend(nodos_valores[nodo])
+
                             for key_codigo, nodos_valores in info.get('codigos_n2', {}).items():
                                 if nodo in nodos_valores and nodos_valores[nodo]:
-                                    total_codigos_nodo += len(nodos_valores[nodo])
-                                    codigos_texto.append(f"CÓDIGO N2: {', '.join(nodos_valores[nodo])}")
+                                    codigos_por_nodo[nodo].extend(nodos_valores[nodo])
+
+                            # Buscar brazos en materiales instalados y clasificarlos por tamaño
+                            for material_key, nodos_qty in materiales_instalados.items():
+                                if "|" in material_key:
+                                    material_name = material_key.split("|")[1].upper()
+                                    if "BRAZO" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                                        # Intentar extraer la longitud del brazo
+                                        longitud_match = re.search(r'(\d+)\s*M', material_name)
+                                        if longitud_match:
+                                            try:
+                                                longitud = int(longitud_match.group(1))
+                                                if longitud >= 3:  # Si el brazo es mayor a 3 metros, usar canasta
+                                                    brazos_grandes_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                                else:
+                                                    brazos_pequenos_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                            except:
+                                                # Si no se puede extraer la longitud pero contiene indicación de tamaño
+                                                if "2 1/2" in material_name or "2.5" in material_name:
+                                                    brazos_grandes_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                                else:
+                                                    brazos_pequenos_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                        # Si no se puede extraer la longitud pero contiene indicación de tamaño grande
+                                        elif "2 1/2" in material_name or "2.5" in material_name:
+                                            brazos_grandes_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                        # Verificar explícitamente si es un brazo de 3 metros
+                                        elif "3 MT" in material_name or "3 MTS" in material_name or "3M" in material_name:
+                                            brazos_grandes_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
+                                        else:
+                                            brazos_pequenos_por_nodo[nodo].append(f"{material_name} ({nodos_qty[nodo]})")
                             
-                            # Si hay códigos, mostrar la cantidad correcta
-                            if total_codigos_nodo > 0:
-                                contenido = f"{total_codigos_nodo}"
-                                if codigos_texto:
-                                    contenido += f""
-                                fila_mo[4 + i] = contenido
-                                #print(f"DEBUG: Nodo {nodo} tiene {total_codigos_nodo} códigos")
-                            else:
-                                # Si no hay códigos, buscar la partida normalmente
-                                partida_nodo = None
-                                if titulo_bloque in mano_obra_por_nodo[nodo]:
-                                    for partida in mano_obra_por_nodo[nodo][titulo_bloque]:
-                                        if "INSTALACION DE LUMINARIAS" in partida['descripcion'].upper():
-                                            partida_nodo = partida
-                                            break
+
+                        # Crear fila para INSTALACION DE LUMINARIAS EN CANASTA
+                        total_canasta = 0
+                        codigos_canasta = set()
+                        brazos_canasta = set()
+
+                        # Crear fila para INSTALACION DE LUMINARIAS EN CAMIONETA
+                        total_camioneta = 0
+                        codigos_camioneta = set()
+                        brazos_camioneta = set()
+
+                        # Procesar cada nodo para determinar qué tipo de instalación necesita
+                        for nodo in nodos_ordenados:
+                            # Si hay brazos grandes, asignar a CANASTA
+                            if brazos_grandes_por_nodo[nodo]:
+                                # La cantidad es el número de códigos o al menos 1 si hay brazos grandes
+                                cantidad_nodo = max(len(codigos_por_nodo[nodo]), 1)
+                                total_canasta += cantidad_nodo
+
+                                # Agregar códigos a la lista de códigos para CANASTA
+                                codigos_canasta.update(codigos_por_nodo[nodo])
+
+                                # Agregar brazos a la lista de brazos para CANASTA
+                                for brazo in brazos_grandes_por_nodo[nodo]:
+                                    brazos_canasta.add(brazo)
+
+                            # Si hay brazos pequeños o códigos sin brazos grandes, asignar a CAMIONETA
+                            elif brazos_pequenos_por_nodo[nodo] or codigos_por_nodo[nodo]:
+                                # La cantidad es el número de códigos o al menos 1 si hay brazos pequeños
+                                cantidad_nodo = max(len(codigos_por_nodo[nodo]), 1)
+                                total_camioneta += cantidad_nodo
+
+                                # Agregar códigos a la lista de códigos para CAMIONETA
+                                codigos_camioneta.update(codigos_por_nodo[nodo])
+
+                                # Agregar brazos a la lista de brazos para CAMIONETA
+                                for brazo in brazos_pequenos_por_nodo[nodo]:
+                                    brazos_camioneta.add(brazo)
+
+                        # Si no se asignó ninguna cantidad pero hay códigos en la OT, forzar al menos una instalación en CAMIONETA
+                        if total_canasta == 0 and total_camioneta == 0 and hay_codigos_ot:
+                            total_camioneta = 1
+
+                            # Recopilar todos los códigos de la OT para mostrar
+                            for _, nodos_valores in info.get('codigos_n1', {}).items():
+                                for nodo, codigos in nodos_valores.items():
+                                    codigos_camioneta.update(codigos)
+
+                            for _, nodos_valores in info.get('codigos_n2', {}).items():
+                                for nodo, codigos in nodos_valores.items():
+                                    codigos_camioneta.update(codigos)
+
+                        # Crear fila para INSTALACION DE LUMINARIAS EN CANASTA si hay cantidad
+                        if total_canasta > 0:
+                            descripcion = "INSTALACION DE LUMINARIAS EN CANASTA"
+                            unidad = "UND"
+
+                            # Crear resumen de materiales
+                            todos_materiales = []
+                            #if codigos_canasta:
+                            #    todos_materiales.append(f"INST: CÓDIGO N1/N2: {', '.join(sorted(codigos_canasta))}")
+                            #if brazos_canasta:
+                            #    todos_materiales.append(f"INST: BRAZOS: {', '.join(sorted(brazos_canasta))}")
+
+                            # Crear la fila
+                            fila_canasta = [descripcion, unidad, total_canasta, ''] + [''] * num_nodos
+
+                            # Agregar materiales en la columna de fecha
+                            if todos_materiales:
+                                fila_canasta[3] = "\n".join(todos_materiales)
+
+                            # Para cada nodo, agregar la cantidad correspondiente
+                            for i, nodo in enumerate(nodos_ordenados):
+                                if brazos_grandes_por_nodo[nodo]:
+                                    # La cantidad es el número de códigos o al menos 1 si hay brazos grandes
+                                    cantidad_nodo = max(len(codigos_por_nodo[nodo]), 1)
+
+                                    # Crear texto con materiales para este nodo
+                                    materiales_nodo = []
+                                    #if codigos_por_nodo[nodo]:
+                                    #    materiales_nodo.append(f"INST: CÓDIGO N1/N2: {', '.join(codigos_por_nodo[nodo])}")
+                                    #if brazos_grandes_por_nodo[nodo]:
+                                    #    materiales_nodo.append(f"INST: BRAZOS: {', '.join(brazos_grandes_por_nodo[nodo])}")
+
+                                    # Formatear contenido: cantidad + materiales
+                                    contenido = f"{cantidad_nodo}"
+                                    if materiales_nodo:
+                                        contenido += f"\n{chr(10).join(materiales_nodo)}"
+
+                                    fila_canasta[4 + i] = contenido
+
+                            # Agregar la fila a la lista de filas
+                            filas.append(fila_canasta)
+
+                        # Crear fila para INSTALACION DE LUMINARIAS EN CAMIONETA si hay cantidad
+                        if total_camioneta > 0:
+                            descripcion = "INSTALACION DE LUMINARIAS EN CAMIONETA"
+                            unidad = "UND"
+
+                            # Crear resumen de materiales
+                            todos_materiales = []
+                            #if codigos_camioneta:
+                            #    todos_materiales.append(f"INST: CÓDIGO N1/N2: {', '.join(sorted(codigos_camioneta))}")
+                            #if brazos_camioneta:
+                            #    todos_materiales.append(f"INST: BRAZOS: {', '.join(sorted(brazos_camioneta))}")
+
+                            # Crear la fila
+                            fila_camioneta = [descripcion, unidad, total_camioneta, ''] + [''] * num_nodos
+
+                            # Agregar materiales en la columna de fecha
+                            if todos_materiales:
+                                fila_camioneta[3] = "\n".join(todos_materiales)
+
+                            # Para cada nodo, agregar la cantidad correspondiente
+                            for i, nodo in enumerate(nodos_ordenados):
+                                if (brazos_pequenos_por_nodo[nodo] or codigos_por_nodo[nodo]) and not brazos_grandes_por_nodo[nodo]:
+                                    # La cantidad es el número de códigos o al menos 1 si hay brazos pequeños
+                                    cantidad_nodo = max(len(codigos_por_nodo[nodo]), 1)
+
+                                    # Crear texto con materiales para este nodo
+                                    materiales_nodo = []
+                                    #if codigos_por_nodo[nodo]:
+                                    #    materiales_nodo.append(f"INST: CÓDIGO N1/N2: {', '.join(codigos_por_nodo[nodo])}")
+                                    #if brazos_pequenos_por_nodo[nodo]:
+                                    #    materiales_nodo.append(f"INST: BRAZOS: {', '.join(brazos_pequenos_por_nodo[nodo])}")
+
+                                    # Formatear contenido: cantidad + materiales
+                                    contenido = f"{cantidad_nodo}"
+                                    if materiales_nodo:
+                                        contenido += f"\n{chr(10).join(materiales_nodo)}"
+
+                                    fila_camioneta[4 + i] = contenido
+
+                            # Agregar la fila a la lista de filas
+                            filas.append(fila_camioneta)
+
+                        total_horizontal = total_canasta + total_camioneta
+                        
+                        if total_horizontal > 0:
+                            descripcion = "INSTALACION DE LUMINARIAS HORIZONTAL ADOSADA"
+                            unidad = "UND"
+                            
+                            # Crear resumen de materiales combinando los de canasta y camioneta
+                            todos_materiales = []
+                            todos_codigos = set()
+                            todos_codigos.update(codigos_canasta)
+                            todos_codigos.update(codigos_camioneta)
+                            
+                            #if todos_codigos:
+                            #    todos_materiales.append(f"INST: CÓDIGO N1/N2: {', '.join(sorted(todos_codigos))}")
+                            
+                            # Crear la fila
+                            fila_horizontal = [descripcion, unidad, total_horizontal, ''] + [''] * num_nodos
+                            
+                            # Agregar materiales en la columna de fecha
+                            if todos_materiales:
+                                fila_horizontal[3] = "\n".join(todos_materiales)
+                            
+                            # Para cada nodo, agregar la cantidad correspondiente
+                            for i, nodo in enumerate(nodos_ordenados):
+                                cantidad_nodo = 0
                                 
-                                if partida_nodo:
-                                    # Formatear el contenido: cantidad + materiales
-                                    contenido = f"{partida_nodo['cantidad']}"
-                                    if partida_nodo['materiales']:
-                                        contenido += f"\n{partida_nodo['materiales']}"
-                                    fila_mo[4 + i] = contenido
-                        
-                        # Agregar la fila a la lista de filas
-                        filas.append(fila_mo)
-                        
-                        # Continuar con el resto de partidas de este bloque
+                                # Sumar las cantidades de canasta y camioneta para este nodo
+                                if brazos_grandes_por_nodo[nodo]:
+                                    cantidad_nodo += max(len(codigos_por_nodo[nodo]), 1)
+                                elif (brazos_pequenos_por_nodo[nodo] or codigos_por_nodo[nodo]):
+                                    cantidad_nodo += max(len(codigos_por_nodo[nodo]), 1)
+                                
+                                if cantidad_nodo > 0:
+                                    # Formatear contenido: cantidad + materiales
+                                    contenido = f"{cantidad_nodo}"
+                                    
+                                    # Crear texto con materiales para este nodo
+                                    materiales_nodo = []
+                                    #if codigos_por_nodo[nodo]:
+                                    #    materiales_nodo.append(f"INST: CÓDIGO N1/N2: {', '.join(codigos_por_nodo[nodo])}")
+                                    
+                                    if materiales_nodo:
+                                        contenido += f"\n{chr(10).join(materiales_nodo)}"
+                                    
+                                    fila_horizontal[4 + i] = contenido
+                            
+                            # Agregar la fila a la lista de filas
+                            filas.append(fila_horizontal)
+                        # Continuar con el resto de partidas de este bloque (que no sean instalación de luminarias)
                         for descripcion in sorted(set(
                             partida['descripcion'] 
                             for nodo in nodos_ordenados 
@@ -3781,7 +4463,6 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                             if "INSTALACION DE LUMINARIAS" not in partida['descripcion'].upper()
                         )):
                             # Procesar otras partidas del bloque que no sean instalación de luminarias
-                            # (código similar al original)
                             unidad = next((
                                 partida['unidad'] 
                                 for nodo in nodos_ordenados 
@@ -3789,7 +4470,7 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                                 for partida in mano_obra_por_nodo[nodo][titulo_bloque] 
                                 if partida['descripcion'] == descripcion
                             ), "UND")
-                            
+
                             cantidad_total = sum(
                                 partida['cantidad']
                                 for nodo in nodos_ordenados
@@ -3797,36 +4478,40 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                                 for partida in mano_obra_por_nodo[nodo][titulo_bloque]
                                 if partida['descripcion'] == descripcion
                             )
-                            
+
+                            # Recopilar todos los materiales asociados
                             todos_materiales = []
                             for nodo in nodos_ordenados:
                                 if titulo_bloque in mano_obra_por_nodo[nodo]:
                                     for partida in mano_obra_por_nodo[nodo][titulo_bloque]:
                                         if partida['descripcion'] == descripcion and partida['materiales']:
-                                            materiales_lineas = partida['materiales'].split('\n')
-                                            for linea in materiales_lineas:
-                                                if linea not in todos_materiales:
-                                                    todos_materiales.append(linea)
-                            
-                            fila_mo = [descripcion, unidad, cantidad_total, ''] + [''] * num_nodos
-                            
+                                            todos_materiales.append(partida['materiales'])
+
+                            # Crear la fila
+                            fila = [descripcion, unidad, cantidad_total, ''] + [''] * num_nodos
+
+                            # Agregar materiales en la columna de fecha
                             if todos_materiales:
-                                fila_mo[3] = "\n".join(todos_materiales)
-                            
+                                fila[3] = "\n".join(todos_materiales)
+
+                            # Para cada nodo, agregar la cantidad correspondiente
                             for i, nodo in enumerate(nodos_ordenados):
                                 partida_nodo = next((
                                     partida
                                     for partida in mano_obra_por_nodo[nodo].get(titulo_bloque, [])
                                     if partida['descripcion'] == descripcion
                                 ), None)
-                                
+
                                 if partida_nodo:
+                                    # Formatear contenido: cantidad + materiales
                                     contenido = f"{partida_nodo['cantidad']}"
                                     if partida_nodo['materiales']:
                                         contenido += f"\n{partida_nodo['materiales']}"
-                                    fila_mo[4 + i] = contenido
-                            
-                            filas.append(fila_mo)
+
+                                    fila[4 + i] = contenido
+
+                            # Agregar la fila a la lista de filas
+                            filas.append(fila)
                     
                     # Procesar otros bloques normalmente
                     elif any(titulo_bloque in mano_obra_por_nodo[nodo] for nodo in nodos_ordenados):
@@ -3862,15 +4547,42 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                             
                             # Recopilar todos los materiales asociados para mostrar en la columna de fecha
                             todos_materiales = []
+                            codigos_n1 = set()
+                            codigos_n2 = set()
+                            brazos = set()
+                            otros_materiales = set()
+
                             for nodo in nodos_ordenados:
                                 if titulo_bloque in mano_obra_por_nodo[nodo]:
                                     for partida in mano_obra_por_nodo[nodo][titulo_bloque]:
-                                        if partida['descripcion'] == descripcion and partida['materiales']:
-                                            # Extraer materiales sin duplicados
+                                        if "INSTALACION DE LUMINARIAS" in partida['descripcion'].upper() and partida['materiales']:
                                             materiales_lineas = partida['materiales'].split('\n')
                                             for linea in materiales_lineas:
-                                                if linea not in todos_materiales:
-                                                    todos_materiales.append(linea)
+                                                if "INST:" in linea:
+                                                    contenido = linea.replace("INST:", "").strip()
+                                                    partes = [p.strip() for p in contenido.split(',')]
+                                                    for parte in partes:
+                                                        if "CÓDIGO N1:" in parte:
+                                                            codigo = parte.replace("CÓDIGO N1:", "").strip()
+                                                            codigos_n1.add(codigo)
+                                                        elif "CÓDIGO N2:" in parte:
+                                                            codigo = parte.replace("CÓDIGO N2:", "").strip()
+                                                            if codigo.lower() != "no":
+                                                                codigos_n2.add(codigo)
+                                                        elif "BRAZO" in parte:
+                                                            brazos.add(parte)
+                                                        else:
+                                                            otros_materiales.add(parte)
+
+                            # Crear un resumen consolidado
+                            #if codigos_n1:
+                            #    todos_materiales.append(f"INST: CÓDIGO N1: {', '.join(sorted(codigos_n1))}")
+                            #if codigos_n2:
+                            #    todos_materiales.append(f"INST: CÓDIGO N2: {', '.join(sorted(codigos_n2))}")
+                            #if brazos:
+                            #    todos_materiales.append(f"INST: BRAZOS: {', '.join(sorted(brazos))}")
+                            #if otros_materiales:
+                            #    todos_materiales.append(f"INST: OTROS: {', '.join(sorted(otros_materiales))}")
                             
                             # Crear la fila con la descripción, unidad y cantidad total
                             fila_mo = [descripcion, unidad, cantidad_total, ''] + [''] * num_nodos
