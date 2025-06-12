@@ -1641,7 +1641,7 @@ def agregar_hoja_asociaciones(writer, datos_combinados):
          ["INSTALACION LUMINARIAS"],
          ["LUMINARIA", "FOTOCELDA", "GRILLETE", "BRAZO"]),
         ("Conexión a tierra",
-         ["CONEXIÓN A CABLE A TIERRA", "INSTALACION KIT SPT", "INSTALACION DE ATERRIZAJES",],
+         ["CONEXIÓN A CABLE A TIERRA", "INSTALACION KIT SPT", "INSTALACION DE ATERRIZAJES", "BOTADO DE ESCOMBROS", "RECUPERACION"],
          ["KIT DE PUESTA A TIERRA", "CONECT PERF", "CONECTOR BIME/COM", "ALAMBRE", "TUERCA", "TORNILLO", "VARILLA"]),
         ("Desmontaje / Transporte",
          ["DESMONTAJE", "TRANSPORTE", "TRANSP.", "TRANSPORTE COLLARINES"],
@@ -2082,6 +2082,16 @@ def cargar_plantilla_mano_obra():
                 'UNIDAD': "UND",
                 'CANTIDAD': 0
             },
+            {
+        'DESCRIPCION MANO DE OBRA': "RECUPERACION ZONA DURA",
+        'UNIDAD': "UND",
+        'CANTIDAD': 0
+    },
+    {
+        'DESCRIPCION MANO DE OBRA': "BOTADO DE ESCOMBROS",
+        'UNIDAD': "UND",
+        'CANTIDAD': 0
+    },
             
             # Partidas de cables
             {
@@ -2203,6 +2213,20 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     
     # ======== CASO ESPECIAL: RECUPERACION ZONA DURA ========
     if "RECUPERACION ZONA DURA" in descripcion_upper:
+        tiene_kit_puesta_tierra = False
+        cantidad_kits = 0
+        for material_key, nodos_qty in materiales_instalados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if "KIT DE PUESTA A TIERRA" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                    tiene_kit_puesta_tierra = True
+                    cantidad_kits += nodos_qty[nodo]
+                    materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+                    cantidad_mo = cantidad_kits
+                    return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados       
+        # Si encontramos KIT DE PUESTA A TIERRA, retornar inmediatamente
+        #if tiene_kit_puesta_tierra:
+            
         # Verificar si el tipo de suelo es "Zona Dura"
         if tipo_suelo and "ZONA DURA" in tipo_suelo.upper():
             # Verificar si hay trabajos que requieran recuperación de zona
@@ -2824,9 +2848,12 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     # Verificar si la descripción corresponde a desmontaje de luminarias    
     if "DESMONTAJE DE LUMINARIAS" in descripcion_upper and ("CAMIONETA" in descripcion_upper or "CANASTA" in descripcion_upper):
         # Lista ampliada de palabras clave para detectar luminarias retiradas
+        #luminaria_keywords = [
+        #    "LUMINARIA", "LAMPARA", "LED", "BOMBILLA", "PROYECTOR", 
+        #    "REFLECTOR", "FOCO", "BALASTRO", "RETIRADA"
+        #]
         luminaria_keywords = [
-            "LUMINARIA", "LAMPARA", "LED", "BOMBILLA", "PROYECTOR", 
-            "REFLECTOR", "FOCO", "BALASTRO", "RETIRADA"
+            "LUMINARIA"
         ]
         
         # Inicializar contador de luminarias retiradas
@@ -2839,10 +2866,10 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 # Verificar si es una luminaria retirada usando múltiples criterios
                 es_luminaria_retirada = (
                     any(kw in material_name for kw in luminaria_keywords) or 
-                    "RETIRADA" in material_name or
-                    "LUMINARIA RETIRADA" in material_name or
-                    "BOMBILLA RETIRADA" in material_name or
-                    "FOTOCELDA RETIRADA" in material_name
+                    #"RETIRADA" in material_name or
+                    "LUMINARIA RETIRADA" in material_name 
+                    #"BOMBILLA RETIRADA" in material_name or
+                    #"FOTOCELDA RETIRADA" in material_name
                 )
                 
                 if es_luminaria_retirada and nodo in nodos_qty:
@@ -2950,11 +2977,12 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
         # 3. Contar luminarias instaladas en materiales (si no hay CODIGO/BRAZO ni códigos)
         luminarias_instaladas_count = 0
         if luminarias_codigo_brazo == 0 and codigos_cantidad == 0:
-            luminaria_keywords = [
-                "LUMINARIA", "LAMPARA", "LED", "BOMBILLA", "PROYECTOR", 
-                "REFLECTOR", "FOCO", "BALASTRO", "LUM"
+            #luminaria_keywords = [
+            #    "LUMINARIA", "LAMPARA", "LED", "BOMBILLA", "PROYECTOR", 
+            #    "REFLECTOR", "FOCO", "BALASTRO", "LUM"
+            #]
+            luminaria_keywords = [ "LUMINARIA", "LUM"
             ]
-
             for material_key, nodos_qty in materiales_instalados.items():
                 if "|" in material_key:
                     material_name = material_key.split("|")[1].upper()
@@ -2969,10 +2997,12 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
                 es_luminaria_retirada = (
-                    any(kw in material_name for kw in ["LUMINARIA", "LAMPARA", "LED", "BOMBILLA", "PROYECTOR", 
-                                                      "REFLECTOR", "FOCO", "BALASTRO", "LUM"]) or 
-                    "RETIRADA" in material_name
-                )
+                #    any(kw in material_name for kw in ["LUMINARIA", "LAMPARA", "LED", "BOMBILLA", "PROYECTOR", 
+                #                                      "REFLECTOR", "FOCO", "BALASTRO", "LUM"]) or 
+                #    "RETIRADA" in material_name
+                #)
+                     any(kw in material_name for kw in ["LUMINARIA", "LUM"]) )
+                
                 if es_luminaria_retirada and nodo in nodos_qty and nodos_qty[nodo] > 0:
                     luminarias_retiradas_count += nodos_qty[nodo]
                     materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
@@ -3499,7 +3529,20 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     if "BOTADO DE ESCOMBROS" in descripcion_upper:
         # Verificar si hay instalación o desmontaje de postes en el nodo
         hay_trabajo_con_postes = False
-        
+        tiene_kit_puesta_tierra = False
+        cantidad_kits = 0
+        for material_key, nodos_qty in materiales_instalados.items():
+            if "|" in material_key:
+                material_name = material_key.split("|")[1].upper()
+                if "KIT DE PUESTA A TIERRA" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                    tiene_kit_puesta_tierra = True
+                    cantidad_kits += nodos_qty[nodo]
+                    materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+                    cantidad_mo = cantidad_kits
+                    return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados  
+        # Si encontramos KIT DE PUESTA A TIERRA, retornar inmediatamente
+        #if tiene_kit_puesta_tierra:
+            
         # Buscar postes instalados en este nodo
         for key, nodos_qty in materiales_instalados.items():
             if "|" in key:
@@ -3973,7 +4016,7 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                      ["INSTALACION LUMINARIAS"],
                      ["LUMINARIA", "FOTOCELDA", "GRILLETE", "BRAZO"]),
                     ("Conexión a tierra",
-                     ["CONEXIÓN A CABLE A TIERRA", "INSTALACION KIT SPT", "INSTALACION DE ATERRIZAJES"],
+                     ["CONEXIÓN A CABLE A TIERRA", "INSTALACION KIT SPT", "INSTALACION DE ATERRIZAJES", "BOTADO DE ESCOMBROS", "RECUPERACION"],
                      ["KIT DE PUESTA A TIERRA", "CONECT PERF", "CONECTOR BIME/COM", "ALAMBRE", "TUERCA", "TORNILLO", "VARILLA"]),
                     ("Desmontaje / Transporte",
                      ["DESMONTAJE", "TRANSPORTE", "TRANSP.", "TRANSPORTE COLLARINES"],
