@@ -2465,27 +2465,29 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     # ======== CASO ESPECIAL: INSTALACION CABLE SECUNDARIO #4 A #2/0 AEREO ========
     if "INSTALACION CABLE SECUNDARIO #4 A #2/0 AEREO" in descripcion_upper:
         cantidad_total = 0
-        
-        # Buscar específicamente CABLE TPX 2x4 AWG XLPE + 48.69 AAAC y CABLE AL TPX 2x2+1x2 AWG
+
+        # CORRECCIÓN: Buscar EXCLUSIVAMENTE en materiales_instalados
         for material_key, nodos_qty in materiales_instalados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
-                
+
                 # Verificar si es uno de los cables específicos mencionados
                 es_cable_tpx = "CABLE TPX 2X4 AWG XLPE + 48.69 AAAC" in material_name
                 es_cable_al_tpx = "CABLE AL TPX 2X2+1X2 AWG" in material_name
-                
-                if (es_cable_tpx or es_cable_al_tpx) and nodo in nodos_qty:
+                es_cable_al4 = "CABLE AL #4" in material_name
+                es_cable_trenzado_2x4 = "CABLE TRENZADO 2X4" in material_name
+
+                if (es_cable_tpx or es_cable_al_tpx or es_cable_al4 or es_cable_trenzado_2x4) and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
-                    # Multiplicar por 3 la cantidad para la mano de obra
-                    cantidad_total += qty * 3
-                    materiales_instalados_relacionados.append(f"{material_name} ({qty} x 3 = {qty*3})")
-                # También considerar otros cables que puedan requerir esta mano de obra
-                elif any(kw in material_name for kw in ["CABLE", "ALAMBRE", "TPX", "CONDUCTOR"]) and "#4" in material_name and nodo in nodos_qty:
-                    qty = nodos_qty[nodo]
-                    cantidad_total += qty
-                    materiales_instalados_relacionados.append(f"{material_name} ({qty})")
-        
+                    if qty > 0:  # Solo contar si la cantidad es mayor a 0
+                        # Multiplicar por 3 la cantidad para cables TPX y AL TPX
+                        if es_cable_tpx or es_cable_al_tpx:
+                            cantidad_total += qty * 3
+                            materiales_instalados_relacionados.append(f"{material_name} ({qty} x 3 = {qty*3})")
+                        else:
+                            cantidad_total += qty
+                            materiales_instalados_relacionados.append(f"{material_name} ({qty})")
+
         cantidad_mo = cantidad_total
         return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
     
@@ -3171,23 +3173,47 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     if "TRANSPORTE DE CABLE" in descripcion_upper:
         cantidad_total = 0
         
-        # Buscar cables instalados
+        # Buscar cables instalados (EXCLUYENDO ALAMBRE CU #14 y ALAMBRE CU THHN #14)
         for material_key, nodos_qty in materiales_instalados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
-                if any(kw in material_name for kw in ["CABLE", "ALAMBRE", "TPX", "CONDUCTOR"]) and nodo in nodos_qty:
+                
+                # Verificar si es un cable pero EXCLUIR ALAMBRE CU #14 y ALAMBRE CU THHN #14
+                es_cable = any(kw in material_name for kw in ["CABLE", "ALAMBRE", "TPX", "CONDUCTOR"])
+                es_cable_excluido = False
+                
+                # Verificar si es ALAMBRE CU #14 o ALAMBRE CU THHN #14 para excluirlo
+                if es_cable and ("#14" in material_name):
+                    if ("ALAMBRE CU #14" in material_name or "ALAMBRE CU THHN #14" in material_name):
+                        es_cable_excluido = True
+                
+                # Solo contar si es cable y NO es uno de los cables excluidos
+                if es_cable and not es_cable_excluido and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
-                    cantidad_total += qty
-                    materiales_instalados_relacionados.append(f"{material_name} ({qty})")
+                    if qty > 0:
+                        cantidad_total += qty
+                        materiales_instalados_relacionados.append(f"{material_name} ({qty})")
         
-        # Buscar cables retirados
+        # Buscar cables retirados (EXCLUYENDO ALAMBRE CU #14 y ALAMBRE CU THHN #14)
         for material_key, nodos_qty in materiales_retirados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
-                if any(kw in material_name for kw in ["CABLE", "ALAMBRE", "TPX", "CONDUCTOR"]) and nodo in nodos_qty:
+                
+                # Verificar si es un cable pero EXCLUIR ALAMBRE CU #14 y ALAMBRE CU THHN #14
+                es_cable = any(kw in material_name for kw in ["CABLE", "ALAMBRE", "TPX", "CONDUCTOR"])
+                es_cable_excluido = False
+                
+                # Verificar si es ALAMBRE CU #14 o ALAMBRE CU THHN #14 para excluirlo
+                if es_cable and ("#14" in material_name):
+                    if ("ALAMBRE CU #14" in material_name or "ALAMBRE CU THHN #14" in material_name):
+                        es_cable_excluido = True
+                
+                # Solo contar si es cable y NO es uno de los cables excluidos
+                if es_cable and not es_cable_excluido and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
-                    cantidad_total += qty
-                    materiales_retirados_relacionados.append(f"{material_name} ({qty})")
+                    if qty > 0:
+                        cantidad_total += qty
+                        materiales_retirados_relacionados.append(f"{material_name} ({qty})")
         
         cantidad_mo = cantidad_total
         return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
