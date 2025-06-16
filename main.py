@@ -2465,12 +2465,12 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     # ======== CASO ESPECIAL: INSTALACION CABLE SECUNDARIO #4 A #2/0 AEREO ========
     if "INSTALACION CABLE SECUNDARIO #4 A #2/0 AEREO" in descripcion_upper:
         cantidad_total = 0
-    
+
         # CORRECCIÓN: Buscar EXCLUSIVAMENTE en materiales_instalados
         for material_key, nodos_qty in materiales_instalados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
-    
+
                 # Verificar si es uno de los cables específicos mencionados
                 es_cable_tpx = "CABLE TPX 2X4 AWG XLPE + 48.69 AAAC" in material_name
                 es_cable_al_tpx = "CABLE AL TPX 2X2+1X2 AWG" in material_name
@@ -2478,7 +2478,7 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 es_cable_trenzado_2x4 = "CABLE TRENZADO 2X4" in material_name
                 # AGREGAR: Detección para CABLE DE CU THHN NRO. 6
                 es_cable_cu_thhn_6 = "CABLE DE CU THHN NRO. 6" in material_name or "CABLE CU THHN NRO. 6" in material_name
-    
+
                 if (es_cable_tpx or es_cable_al_tpx or es_cable_al4 or es_cable_trenzado_2x4 or es_cable_cu_thhn_6) and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
                     if qty > 0:  # Solo contar si la cantidad es mayor a 0
@@ -2489,7 +2489,7 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                         else:
                             cantidad_total += qty
                             materiales_instalados_relacionados.append(f"{material_name} ({qty})")
-    
+
         cantidad_mo = cantidad_total
         return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
     
@@ -3184,11 +3184,32 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 es_cable = any(kw in material_name for kw in ["CABLE", "ALAMBRE", "TPX", "CONDUCTOR"])
                 es_cable_excluido = False
                 
-                # Verificar si es ALAMBRE CU #14 o ALAMBRE CU THHN #14 para excluirlo
-                if es_cable and ("#14" in material_name):
-                    if ("ALAMBRE CU #14" in material_name or "ALAMBRE CU THHN #14" in material_name):
-                        es_cable_excluido = True
+                # CORRECCIÓN MEJORADA: Verificar patrones más específicos para exclusión
+                material_normalizado = ' '.join(material_name.split())  # Normalizar espacios
                 
+                # Patrones específicos a excluir - AMPLIADOS
+                patrones_excluidos = [
+                    "ALAMBRE CU #14",
+                    "ALAMBRE CU # 14", 
+                    "ALAMBRE CU THHN #14",
+                    "ALAMBRE CU THHN # 14",
+                    "ALAMBRE DE CU #14",
+                    "ALAMBRE DE CU # 14",
+                    "ALAMBRE DE CU THHN #14",
+                    "ALAMBRE DE CU THHN # 14",
+                    "ALAMBRE CU#14",
+                    "ALAMBRE CU #14 AWG",
+                    "ALAMBRE CU # 14 AWG",
+                    "ALAMBRE CU THHN #14 AWG",
+                    "ALAMBRE CU THHN # 14 AWG"
+                ]
+                
+                # Verificar si coincide con algún patrón excluido
+                for patron in patrones_excluidos:
+                    if patron in material_normalizado:
+                        es_cable_excluido = True
+                        break
+                    
                 # Solo contar si es cable y NO es uno de los cables excluidos
                 if es_cable and not es_cable_excluido and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
@@ -3205,11 +3226,49 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 es_cable = any(kw in material_name for kw in ["CABLE", "ALAMBRE", "TPX", "CONDUCTOR"])
                 es_cable_excluido = False
                 
-                # Verificar si es ALAMBRE CU #14 o ALAMBRE CU THHN #14 para excluirlo
-                if es_cable and ("#14" in material_name):
-                    if ("ALAMBRE CU #14" in material_name or "ALAMBRE CU THHN #14" in material_name):
+                # CORRECCIÓN MEJORADA: Verificar patrones más específicos para exclusión
+                material_normalizado = ' '.join(material_name.split())  # Normalizar espacios
+                
+                # Patrones específicos a excluir - AMPLIADOS Y MEJORADOS
+                patrones_excluidos = [
+                    "ALAMBRE CU #14",
+                    "ALAMBRE CU # 14", 
+                    "ALAMBRE CU THHN #14",
+                    "ALAMBRE CU THHN # 14",
+                    "ALAMBRE DE CU #14",
+                    "ALAMBRE DE CU # 14",
+                    "ALAMBRE DE CU THHN #14",
+                    "ALAMBRE DE CU THHN # 14",
+                    "ALAMBRE CU#14",
+                    "ALAMBRE CU #14 AWG",
+                    "ALAMBRE CU # 14 AWG",
+                    "ALAMBRE CU THHN #14 AWG",
+                    "ALAMBRE CU THHN # 14 AWG",
+                    # Agregar más variaciones posibles
+                    "ALAMBRE COBRE #14",
+                    "ALAMBRE COBRE # 14",
+                    "ALAMBRE COBRE THHN #14",
+                    "ALAMBRE COBRE THHN # 14"
+                ]
+                
+                # NUEVA LÓGICA: Verificación más estricta
+                # Primero verificar si contiene "#14" o "# 14"
+                contiene_14 = ("#14" in material_normalizado or "# 14" in material_normalizado)
+                
+                # Si contiene #14, verificar si es alambre de cobre
+                if contiene_14:
+                    es_alambre_cu = ("ALAMBRE" in material_normalizado and 
+                                   ("CU" in material_normalizado or "COBRE" in material_normalizado))
+                    if es_alambre_cu:
                         es_cable_excluido = True
                 
+                # Verificación adicional con patrones específicos
+                if not es_cable_excluido:
+                    for patron in patrones_excluidos:
+                        if patron in material_normalizado:
+                            es_cable_excluido = True
+                            break
+                        
                 # Solo contar si es cable y NO es uno de los cables excluidos
                 if es_cable and not es_cable_excluido and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
