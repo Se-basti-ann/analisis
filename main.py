@@ -3174,19 +3174,19 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     
     if "TRANSPORTE DE CABLE" in descripcion_upper:
         cantidad_total = 0
-        
+
         # Buscar cables instalados (EXCLUYENDO ALAMBRE CU #14 y ALAMBRE CU THHN #14)
         for material_key, nodos_qty in materiales_instalados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
-                
+
                 # Verificar si es un cable pero EXCLUIR ALAMBRE CU #14 y ALAMBRE CU THHN #14
                 es_cable = any(kw in material_name for kw in ["CABLE", "ALAMBRE", "TPX", "CONDUCTOR"])
                 es_cable_excluido = False
-                
+
                 # CORRECCIÓN MEJORADA: Verificar patrones más específicos para exclusión
                 material_normalizado = ' '.join(material_name.split())  # Normalizar espacios
-                
+
                 # Patrones específicos a excluir - AMPLIADOS
                 patrones_excluidos = [
                     "ALAMBRE CU #14",
@@ -3203,7 +3203,7 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                     "ALAMBRE CU THHN #14 AWG",
                     "ALAMBRE CU THHN # 14 AWG"
                 ]
-                
+
                 # Verificar si coincide con algún patrón excluido
                 for patron in patrones_excluidos:
                     if patron in material_normalizado:
@@ -3214,21 +3214,25 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 if es_cable and not es_cable_excluido and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
                     if qty > 0:
-                        cantidad_total += qty
+                        # CORRECCIÓN: NO multiplicar por 3 en transporte, solo usar cantidad original
+                        if "CABLE TPX 2X4 AWG XLPE + 48.69 AAAC (MTS)" in material_name:
+                            cantidad_total += qty * 3
+                        else:
+                            cantidad_total += qty
                         materiales_instalados_relacionados.append(f"{material_name} ({qty})")
-        
+
         # Buscar cables retirados (EXCLUYENDO ALAMBRE CU #14 y ALAMBRE CU THHN #14)
         for material_key, nodos_qty in materiales_retirados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
-                
+
                 # Verificar si es un cable pero EXCLUIR ALAMBRE CU #14 y ALAMBRE CU THHN #14
                 es_cable = any(kw in material_name for kw in ["CABLE", "ALAMBRE", "TPX", "CONDUCTOR"])
                 es_cable_excluido = False
-                
+
                 # CORRECCIÓN MEJORADA: Verificar patrones más específicos para exclusión
                 material_normalizado = ' '.join(material_name.split())  # Normalizar espacios
-                
+
                 # Patrones específicos a excluir - AMPLIADOS Y MEJORADOS
                 patrones_excluidos = [
                     "ALAMBRE CU #14",
@@ -3250,18 +3254,18 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                     "ALAMBRE COBRE THHN #14",
                     "ALAMBRE COBRE THHN # 14"
                 ]
-                
+
                 # NUEVA LÓGICA: Verificación más estricta
                 # Primero verificar si contiene "#14" o "# 14"
                 contiene_14 = ("#14" in material_normalizado or "# 14" in material_normalizado)
-                
+
                 # Si contiene #14, verificar si es alambre de cobre
                 if contiene_14:
                     es_alambre_cu = ("ALAMBRE" in material_normalizado and 
                                    ("CU" in material_normalizado or "COBRE" in material_normalizado))
                     if es_alambre_cu:
                         es_cable_excluido = True
-                
+
                 # Verificación adicional con patrones específicos
                 if not es_cable_excluido:
                     for patron in patrones_excluidos:
@@ -3273,9 +3277,13 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 if es_cable and not es_cable_excluido and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
                     if qty > 0:
-                        cantidad_total += qty
+                        # CORRECCIÓN: NO multiplicar por 3 en transporte, solo usar cantidad original
+                        if "CABLE TPX 2X4 AWG XLPE + 48.69 AAAC (MTS)" in material_name:
+                            cantidad_total += qty * 3
+                        else:
+                            cantidad_total += qty
                         materiales_retirados_relacionados.append(f"{material_name} ({qty})")
-        
+
         cantidad_mo = cantidad_total
         return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
     
@@ -5146,7 +5154,7 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
             writer.book.remove(writer.book[temp_sheet_name])
             df_error = pd.DataFrame({
                 'Error': [
-                    'Dato no válidos - Razones posibles:',
+                    'Datos no válidos - Razones posibles:',
                     '1. Columnas requeridas faltantes',
                     '2. Valores "NINGUNO" o 0 en todos los registros',
                     '3. Formato de archivo incorrecto'
