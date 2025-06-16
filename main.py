@@ -5146,7 +5146,7 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
             writer.book.remove(writer.book[temp_sheet_name])
             df_error = pd.DataFrame({
                 'Error': [
-                    'Datos no válidos - Razones posibles:',
+                    'Dato no válidos - Razones posibles:',
                     '1. Columnas requeridas faltantes',
                     '2. Valores "NINGUNO" o 0 en todos los registros',
                     '3. Formato de archivo incorrecto'
