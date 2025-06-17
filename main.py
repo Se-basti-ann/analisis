@@ -4605,7 +4605,7 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                 # FORZAR la aparición de instalación de luminarias si hay códigos pero no hay instalación
                 if hay_codigos_ot and not hay_instalacion_luminarias and nodos_ordenados:
                     # Determinar si hay algún nodo con brazo grande en la OT
-                    usar_canasta_este_nodo = info_brazos_por_nodo.get(nodo_con_codigos, {}).get('usar_canasta', False)
+                    
                     
                     # Elegir el primer nodo que tenga códigos
                     nodo_con_codigos = None
@@ -4630,7 +4630,8 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                     if not nodo_con_codigos and nodos_ordenados:
                         nodo_con_codigos = nodos_ordenados[0]
                     
-                    if nodo_con_codigos:
+                    if nodo_con_codigos:                        
+                        usar_canasta_este_nodo = info_brazos_por_nodo.get(nodo_con_codigos, {}).get('usar_canasta', False)
                         # Inicializar el bloque si no existe
                         if "Instalación luminarias" not in mano_obra_por_nodo[nodo_con_codigos]:
                             mano_obra_por_nodo[nodo_con_codigos]["Instalación luminarias"] = []
@@ -4734,12 +4735,11 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                             total_canasta = 0
                             luminarias_canasta = set()
                             brazos_canasta = set()
-
-                            # Crear fila para INSTALACION DE LUMINARIAS EN CAMIONETA
+                            
                             total_camioneta = 0
                             luminarias_camioneta = set()
                             brazos_camioneta = set()
-
+                            
                             # Procesar cada nodo para determinar qué tipo de instalación necesita
                             for nodo in nodos_ordenados:
                                 # Contar LUMINARIA CODIGO/BRAZO en este nodo
@@ -4749,7 +4749,7 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                                         material_name = material_key.split("|")[1].upper()
                                         if "LUMINARIA CODIGO/BRAZO" in material_name and nodo in nodos_qty:
                                             cantidad_luminarias_codigo_brazo += nodos_qty[nodo]
-
+                            
                                 # Solo proceder si hay LUMINARIA CODIGO/BRAZO en este nodo
                                 if cantidad_luminarias_codigo_brazo > 0:
                                     # Si hay brazos grandes, asignar a CANASTA
@@ -4772,6 +4772,7 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                                                     elif "3 MT" in material_name or "3 MTS" in material_name or "3M" in material_name:
                                                         tiene_brazo_3m_confirmado = True
                                                         break
+                                                    
                                         if brazos_grandes_por_nodo[nodo]:
                                             total_canasta += cantidad_luminarias_codigo_brazo
                                             for luminaria in luminarias_codigo_brazo_por_nodo[nodo]:
@@ -4787,27 +4788,27 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                                             # Agregar brazos a la lista de brazos para CAMIONETA
                                             for brazo in brazos_pequenos_por_nodo[nodo]:
                                                 brazos_camioneta.add(brazo)
-
+                            
                                     # Si no hay brazos grandes, asignar a CAMIONETA
                                     else:
                                         total_camioneta += cantidad_luminarias_codigo_brazo
-
+                            
                                         # Agregar luminarias a la lista para CAMIONETA
                                         for luminaria in luminarias_codigo_brazo_por_nodo[nodo]:
                                             luminarias_camioneta.add(luminaria)
-
+                            
                                         # Agregar brazos a la lista de brazos para CAMIONETA
                                         for brazo in brazos_pequenos_por_nodo[nodo]:
                                             brazos_camioneta.add(brazo)
-
+                            
                             # Crear fila para INSTALACION DE LUMINARIAS EN CANASTA si hay cantidad
                             if total_canasta > 0:
                                 descripcion = "INSTALACION DE LUMINARIAS EN CANASTA"
                                 unidad = "UND"
-
+                            
                                 # Crear la fila
                                 fila_canasta = [descripcion, unidad, total_canasta, ''] + [''] * num_nodos
-
+                            
                                 # Para cada nodo, agregar la cantidad correspondiente
                                 for i, nodo in enumerate(nodos_ordenados):
                                     # Verificar si hay LUMINARIA CODIGO/BRAZO en este nodo
@@ -4817,22 +4818,22 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                                             material_name = material_key.split("|")[1].upper()
                                             if "LUMINARIA CODIGO/BRAZO" in material_name and nodo in nodos_qty:
                                                 cantidad_nodo += nodos_qty[nodo]
-
+                            
                                     # Solo asignar si hay LUMINARIA CODIGO/BRAZO y brazos grandes
                                     if cantidad_nodo > 0 and brazos_grandes_por_nodo[nodo]:
                                         fila_canasta[4 + i] = cantidad_nodo
-
+                            
                                 # Agregar la fila a la lista de filas
                                 filas.append(fila_canasta)
-
+                            
                             # Crear fila para INSTALACION DE LUMINARIAS EN CAMIONETA
                             if total_camioneta > 0:
                                 descripcion = "INSTALACION DE LUMINARIAS EN CAMIONETA"
                                 unidad = "UND"
-
+                            
                                 # Crear la fila
                                 fila_camioneta = [descripcion, unidad, total_camioneta, ''] + [''] * num_nodos
-
+                            
                                 # Para cada nodo, agregar la cantidad correspondiente
                                 for i, nodo in enumerate(nodos_ordenados):
                                     # Verificar si hay LUMINARIA CODIGO/BRAZO en este nodo
@@ -4842,15 +4843,16 @@ def generar_excel(datos_combinados, datos_por_barrio_combinados, dfs_originales_
                                             material_name = material_key.split("|")[1].upper()
                                             if "LUMINARIA CODIGO/BRAZO" in material_name and nodo in nodos_qty:
                                                 cantidad_nodo += nodos_qty[nodo]
-
+                            
                                     # Solo asignar si hay LUMINARIA CODIGO/BRAZO y no hay brazos grandes
                                     if cantidad_nodo > 0 and not brazos_grandes_por_nodo[nodo]:
                                         fila_camioneta[4 + i] = cantidad_nodo
-
+                            
                                 # Agregar la fila a la lista de filas
                                 filas.append(fila_camioneta)
-
-                        total_horizontal = total_canasta + total_camioneta
+                            
+                            # Ahora las variables están garantizadas de estar inicializadas
+                            total_horizontal = total_canasta + total_camioneta
                         
                         #if total_horizontal > 0:
                         #    descripcion = "INSTALACION DE LUMINARIAS HORIZONTAL ADOSADA"
