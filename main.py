@@ -659,6 +659,7 @@ def procesar_archivo_modernizacion(file: UploadFile):
                     for posicion, info in info_codigos.items():
                         # Contar cuántos códigos hay en esta posición
                         # Necesitamos acceder a los códigos reales desde los datos originales
+                        print("Para generar un cambio en el git")
                         if posicion == 'n1':
                             for key_codigo, nodos_valores in datos[ot]['codigos_n1'].items():
                                 if nodo in nodos_valores:
