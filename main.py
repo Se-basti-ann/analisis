@@ -654,7 +654,7 @@ def procesar_archivo_modernizacion(file: UploadFile):
                     # Calcular la cantidad total de brazos instalados en este nodo
                     total_brazos = sum(brazo['cantidad'] for brazo in brazos_info)
 
-                    # CORRECCIÓN: Contar el total de códigos de luminarias en este nodo
+                    # CORRECCIÓN: Contar el total de códigos de luminarias en estenodo
                     total_codigos_luminarias = 0
                     for posicion, info in info_codigos.items():
                         # Contar cuántos códigos hay en esta posición
