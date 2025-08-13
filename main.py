@@ -2741,16 +2741,16 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 material_name = material_key.split("|")[1].upper()
                 
                 # Verificar si es una abrazadera ciega
-                if "ABRAZADERA CIEGA 1 CARA GALV 6" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                if "ABRAZADERA CIEGA 1 CARA GALV 6" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0 or "17.ABRAZADERA CIEGA 6 PULGADAS" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0 or "17.ABRAZADERA" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
                     tiene_abrazadera = True
                     cantidad_total += nodos_qty[nodo]
                     materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
                 
                 # Verificar si es un grillete galvanizado
-                if "GRILLETE GALVANIZADO 1 1/2" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
-                    tiene_grillete = True
-                    cantidad_total += nodos_qty[nodo]
-                    materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+                #if "GRILLETE GALVANIZADO 1 1/2" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                #    tiene_grillete = True
+                #    cantidad_total += nodos_qty[nodo]
+                #    materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
         
         # También buscar en materiales retirados
         for material_key, nodos_qty in materiales_retirados.items():
@@ -2758,19 +2758,20 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 material_name = material_key.split("|")[1].upper()
                 
                 # Verificar si es una abrazadera ciega
-                if "ABRAZADERA CIEGA 1 CARA GALV 6" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0 or "17.ABRAZADERA CIEGA 6 PULGADAS" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                if "ABRAZADERA CIEGA 1 CARA GALV 6" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0 or "17.ABRAZADERA CIEGA 6 PULGADAS" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0 or "17.ABRAZADERA" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
                     tiene_abrazadera = True
                     cantidad_total += nodos_qty[nodo]
                     materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
                 
                 # Verificar si es un grillete galvanizado
-                if "GRILLETE GALVANIZADO 1 1/2" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
-                    tiene_grillete = True
-                    cantidad_total += nodos_qty[nodo]
-                    materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+                #if "GRILLETE GALVANIZADO 1 1/2" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                #    tiene_grillete = True
+                #    cantidad_total += nodos_qty[nodo]
+                #    materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
         
         # Si se encontró al menos uno de los materiales, asignar mano de obra
-        if tiene_abrazadera or tiene_grillete:
+        #if tiene_abrazadera or tiene_grillete:
+        if tiene_abrazadera:
             cantidad_mo = cantidad_total
             return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
     
@@ -2830,7 +2831,7 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 es_cable_al4 = "CABLE AL #4" in material_name
                 es_cable_trenzado_2x4 = "CABLE TRENZADO 2X4" in material_name
                 # AGREGAR: Detección para CABLE DE CU THHN NRO. 6
-                es_cable_cu_thhn_6 = "CABLE DE CU THHN NRO. 6" in material_name or "CABLE CU THHN NRO. 6" in material_name
+                es_cable_cu_thhn_6 = "CABLE DE CU THHN NRO. 6" in material_name or "CABLE CU THHN NRO. 6" in material_name or "CABLE DE AL #6" in material_name
 
                 if (es_cable_tpx or es_cable_al_tpx or es_cable_al4 or es_cable_trenzado_2x4 or es_cable_cu_thhn_6) and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
@@ -3717,7 +3718,7 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                     qty = nodos_qty[nodo]
                     if qty > 0:
                         # CORRECCIÓN: NO multiplicar por 3 en transporte, solo usar cantidad original
-                        if "CABLE TPX 2X4 AWG XLPE + 48.69 AAAC (MTS)" in material_name:
+                        if "CABLE TPX 2X4 AWG XLPE + 48.69 AAAC (MTS)" in material_name or "CABLE TPX 2X2" in material_name or "CABLE ENCAUCHETADO 3x14" in material_name or "CABLE AL TPX 2X2+1X2 AWG" in material_name:
                             cantidad_total += qty * 3
                         else:
                             cantidad_total += qty
