@@ -2831,7 +2831,7 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                 es_cable_al4 = "CABLE AL #4" in material_name
                 es_cable_trenzado_2x4 = "CABLE TRENZADO 2X4" in material_name
                 # AGREGAR: Detección para CABLE DE CU THHN NRO. 6
-                es_cable_cu_thhn_6 = "CABLE DE CU THHN NRO. 6" in material_name or "CABLE CU THHN NRO. 6" in material_name or "CABLE DE AL #6" in material_name
+                es_cable_cu_thhn_6 = "CABLE DE CU THHN NRO. 6" in material_name or "CABLE CU THHN NRO. 6" in material_name or "CABLE DE AL THHN NRO. 6 (MTS)" in material_name
 
                 if (es_cable_tpx or es_cable_al_tpx or es_cable_al4 or es_cable_trenzado_2x4 or es_cable_cu_thhn_6) and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
@@ -3720,6 +3720,8 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                         # CORRECCIÓN: NO multiplicar por 3 en transporte, solo usar cantidad original
                         if "CABLE TPX 2X4 AWG XLPE + 48.69 AAAC (MTS)" in material_name or "CABLE TPX 2X2" in material_name or "CABLE ENCAUCHETADO 3x14" in material_name or "CABLE AL TPX 2X2+1X2 AWG" in material_name:
                             cantidad_total += qty * 3
+                        elif "CABLE DE AL THHN NRO. 6 (MTS)" in material_name:
+                            cantidad_total += qty
                         else:
                             cantidad_total += qty
                         materiales_retirados_relacionados.append(f"{material_name} ({qty})")
