@@ -2733,44 +2733,46 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     if "TRANSPORTE COLLARINES" in descripcion_upper:
         cantidad_total = 0
         tiene_abrazadera = False
-        tiene_grillete = False
         
-        # Buscar ABRAZADERA CIEGA 1 CARA GALV 6" en materiales instalados
+        # Buscar ABRAZADERAS (CIEGAS y SENCILLAS) en materiales instalados
         for material_key, nodos_qty in materiales_instalados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
                 
-                # Verificar si es una abrazadera ciega
-                if "ABRAZADERA CIEGA 1 CARA GALV 6" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0 or "17.ABRAZADERA CIEGA 6 PULGADAS" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0 or "17.ABRAZADERA" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                # Verificar si es una abrazadera (ciega o sencilla) con diferentes tamaños
+                es_abrazadera = (
+                    ("ABRAZADERA" in material_name and "CIEGA" in material_name) or
+                    ("ABRAZADERA" in material_name and "SENCILLA" in material_name)
+                )
+                
+                # Verificar tamaños específicos (6, 7, 8, 10 pulgadas)
+                tiene_tamano_valido = any(size in material_name for size in ["6", "7", "8", "10"])
+                
+                if es_abrazadera and tiene_tamano_valido and nodo in nodos_qty and nodos_qty[nodo] > 0:
                     tiene_abrazadera = True
                     cantidad_total += nodos_qty[nodo]
                     materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-                
-                # Verificar si es un grillete galvanizado
-                #if "GRILLETE GALVANIZADO 1 1/2" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
-                #    tiene_grillete = True
-                #    cantidad_total += nodos_qty[nodo]
-                #    materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
         
         # También buscar en materiales retirados
         for material_key, nodos_qty in materiales_retirados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
                 
-                # Verificar si es una abrazadera ciega
-                if "ABRAZADERA CIEGA 1 CARA GALV 6" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0 or "17.ABRAZADERA CIEGA 6 PULGADAS" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0 or "17.ABRAZADERA" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
+                # Verificar si es una abrazadera (ciega o sencilla) con diferentes tamaños
+                es_abrazadera = (
+                    ("ABRAZADERA" in material_name and "CIEGA" in material_name) or
+                    ("ABRAZADERA" in material_name and "SENCILLA" in material_name)
+                )
+                
+                # Verificar tamaños específicos (6, 7, 8, 10 pulgadas)
+                tiene_tamano_valido = any(size in material_name for size in ["6", "7", "8", "10"])
+                
+                if es_abrazadera and tiene_tamano_valido and nodo in nodos_qty and nodos_qty[nodo] > 0:
                     tiene_abrazadera = True
                     cantidad_total += nodos_qty[nodo]
                     materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-                
-                # Verificar si es un grillete galvanizado
-                #if "GRILLETE GALVANIZADO 1 1/2" in material_name and nodo in nodos_qty and nodos_qty[nodo] > 0:
-                #    tiene_grillete = True
-                #    cantidad_total += nodos_qty[nodo]
-                #    materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
         
-        # Si se encontró al menos uno de los materiales, asignar mano de obra
-        #if tiene_abrazadera or tiene_grillete:
+        # Si se encontró al menos una abrazadera, asignar mano de obra
         if tiene_abrazadera:
             cantidad_mo = cantidad_total
             return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
