@@ -3503,113 +3503,169 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
     # Transporte de brazos de 1 1/2" hasta 3 mts
     if "TRANSPORTE DE BRAZOS 1 1/2\" HASTA 3 MTS" in descripcion_upper:
         cantidad_total = 0
-        
+
         # Buscar brazos instalados que coincidan con la descripción
         for material_key, nodos_qty in materiales_instalados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
                 if "BRAZO" in material_name and nodo in nodos_qty:
-                    # Verificar si es un brazo de 1 1/2" hasta 3 mts
-                    if "1 1/2" in material_name or "1.5" in material_name:
-                        # Verificar longitud si está especificada
-                        longitud_match = re.search(r'(\d+)\s*M(?:TS?)?', material_name)
+                    # Verificar si es un brazo pequeño (1 1/2", 3/4", etc.)
+                    es_brazo_pequeno = (
+                        "1 1/2" in material_name or 
+                        "1.5" in material_name or 
+                        "1,5" in material_name or
+                        "3/4" in material_name or
+                        "EN L" in material_name
+                    )
+
+                    if es_brazo_pequeno:
+                        # Extraer longitud con diferentes formatos
+                        longitud = 0
+
+                        # Patrón 1: X 1,5 MT, X 2 MT, etc.
+                        longitud_match = re.search(r'X\s*(\d+(?:,\d+)?)\s*MT', material_name)
                         if longitud_match:
+                            longitud_str = longitud_match.group(1).replace(',', '.')
                             try:
-                                longitud = int(longitud_match.group(1))
-                                if longitud <= 3:
-                                    cantidad_total += nodos_qty[nodo]
-                                    materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+                                longitud = float(longitud_str)
                             except:
-                                # Si no se puede extraer la longitud pero parece ser un brazo pequeño
-                                cantidad_total += nodos_qty[nodo]
-                                materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-                        else:
-                            # Si no hay longitud específica, asumir que está en el rango
+                                longitud = 0
+
+                        # Patrón 2: 1,5 MT, 2 MT, etc. (sin X)
+                        if longitud == 0:
+                            longitud_match = re.search(r'(\d+(?:,\d+)?)\s*MT', material_name)
+                            if longitud_match:
+                                longitud_str = longitud_match.group(1).replace(',', '.')
+                                try:
+                                    longitud = float(longitud_str)
+                                except:
+                                    longitud = 0
+
+                        # Solo contar si la longitud es <= 3 metros o no se puede determinar (asumir pequeño)
+                        if longitud == 0 or longitud <= 3:
                             cantidad_total += nodos_qty[nodo]
                             materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-        
-        # Buscar brazos retirados que coincidan con la descripción
+
+        # Buscar brazos retirados
         for material_key, nodos_qty in materiales_retirados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
                 if "BRAZO" in material_name and nodo in nodos_qty:
-                    # Verificar si es un brazo de 1 1/2" hasta 3 mts
-                    if "1 1/2" in material_name or "1.5" in material_name:
-                        # Verificar longitud si está especificada
-                        longitud_match = re.search(r'(\d+)\s*M(?:TS?)?', material_name)
+                    es_brazo_pequeno = (
+                        "1 1/2" in material_name or 
+                        "1.5" in material_name or 
+                        "1,5" in material_name or
+                        "3/4" in material_name or
+                        "EN L" in material_name
+                    )
+
+                    if es_brazo_pequeno:
+                        # Extraer longitud con diferentes formatos
+                        longitud = 0
+
+                        # Patrón 1: X 1,5 MT, X 2 MT, etc.
+                        longitud_match = re.search(r'X\s*(\d+(?:,\d+)?)\s*MT', material_name)
                         if longitud_match:
+                            longitud_str = longitud_match.group(1).replace(',', '.')
                             try:
-                                longitud = int(longitud_match.group(1))
-                                if longitud <= 3:
-                                    cantidad_total += nodos_qty[nodo]
-                                    materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+                                longitud = float(longitud_str)
                             except:
-                                # Si no se puede extraer la longitud pero parece ser un brazo pequeño
-                                cantidad_total += nodos_qty[nodo]
-                                materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-                        else:
-                            # Si no hay longitud específica, asumir que está en el rango
+                                longitud = 0
+
+                        # Patrón 2: 1,5 MT, 2 MT, etc. (sin X)
+                        if longitud == 0:
+                            longitud_match = re.search(r'(\d+(?:,\d+)?)\s*MT', material_name)
+                            if longitud_match:
+                                longitud_str = longitud_match.group(1).replace(',', '.')
+                                try:
+                                    longitud = float(longitud_str)
+                                except:
+                                    longitud = 0
+
+                        if longitud == 0 or longitud <= 3:
                             cantidad_total += nodos_qty[nodo]
                             materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-        
+
         cantidad_mo = cantidad_total
         return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
-    
+
     # Transporte de brazos 2 1/2" hasta 6 mts
     if "TRANSPORTE DE BRAZOS 2 1/2\" HASTA 6 MTS" in descripcion_upper:
         cantidad_total = 0
-        
+
         # Buscar brazos instalados que coincidan con la descripción
         for material_key, nodos_qty in materiales_instalados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
                 if "BRAZO" in material_name and nodo in nodos_qty:
-                    # Verificar si es un brazo de 2 1/2" hasta 6 mts
-                    if "2 1/2" in material_name or "2.5" in material_name:
-                        # Verificar longitud si está especificada
-                        longitud_match = re.search(r'(\d+)\s*M(?:TS?)?', material_name)
+                    # Extraer longitud con diferentes formatos
+                    longitud = 0
+
+                    # Patrón 1: X 3 MT, X 4 MT, etc.
+                    longitud_match = re.search(r'X\s*(\d+(?:,\d+)?)\s*MT', material_name)
+                    if longitud_match:
+                        longitud_str = longitud_match.group(1).replace(',', '.')
+                        try:
+                            longitud = float(longitud_str)
+                        except:
+                            longitud = 0
+
+                    # Patrón 2: 3 MT, 4 MT, etc. (sin X)
+                    if longitud == 0:
+                        longitud_match = re.search(r'(\d+(?:,\d+)?)\s*MT', material_name)
                         if longitud_match:
+                            longitud_str = longitud_match.group(1).replace(',', '.')
                             try:
-                                longitud = int(longitud_match.group(1))
-                                if 3 < longitud <= 6:
-                                    cantidad_total += nodos_qty[nodo]
-                                    materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+                                longitud = float(longitud_str)
                             except:
-                                # Si no se puede extraer la longitud pero parece ser un brazo grande
-                                cantidad_total += nodos_qty[nodo]
-                                materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-                        else:
-                            # Si no hay longitud específica, asumir que está en el rango
-                            cantidad_total += nodos_qty[nodo]
-                            materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-        
-        # Buscar brazos retirados que coincidan con la descripción
+                                longitud = 0
+
+                    # Contar brazos de 3 metros o más (considerados grandes)
+                    if longitud > 3:
+                        cantidad_total += nodos_qty[nodo]
+                        materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+                    # Si no se puede determinar longitud pero es 2 1/2", asumir que es grande
+                    elif longitud == 0 and ("2 1/2" in material_name or "2.5" in material_name):
+                        cantidad_total += nodos_qty[nodo]
+                        materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+
+        # Buscar brazos retirados
         for material_key, nodos_qty in materiales_retirados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
                 if "BRAZO" in material_name and nodo in nodos_qty:
-                    # Verificar si es un brazo de 2 1/2" hasta 6 mts
-                    if "2 1/2" in material_name or "2.5" in material_name:
-                        # Verificar longitud si está especificada
-                        longitud_match = re.search(r'(\d+)\s*M(?:TS?)?', material_name)
+                    # Extraer longitud con diferentes formatos
+                    longitud = 0
+
+                    # Patrón 1: X 3 MT, X 4 MT, etc.
+                    longitud_match = re.search(r'X\s*(\d+(?:,\d+)?)\s*MT', material_name)
+                    if longitud_match:
+                        longitud_str = longitud_match.group(1).replace(',', '.')
+                        try:
+                            longitud = float(longitud_str)
+                        except:
+                            longitud = 0
+
+                    # Patrón 2: 3 MT, 4 MT, etc. (sin X)
+                    if longitud == 0:
+                        longitud_match = re.search(r'(\d+(?:,\d+)?)\s*MT', material_name)
                         if longitud_match:
+                            longitud_str = longitud_match.group(1).replace(',', '.')
                             try:
-                                longitud = int(longitud_match.group(1))
-                                if 3 < longitud <= 6:
-                                    cantidad_total += nodos_qty[nodo]
-                                    materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+                                longitud = float(longitud_str)
                             except:
-                                # Si no se puede extraer la longitud pero parece ser un brazo grande
-                                cantidad_total += nodos_qty[nodo]
-                                materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-                        else:
-                            # Si no hay longitud específica, asumir que está en el rango
-                            cantidad_total += nodos_qty[nodo]
-                            materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-        
+                                longitud = 0
+
+                    if longitud > 3:
+                        cantidad_total += nodos_qty[nodo]
+                        materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+                    elif longitud == 0 and ("2 1/2" in material_name or "2.5" in material_name):
+                        cantidad_total += nodos_qty[nodo]
+                        materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
+
         cantidad_mo = cantidad_total
         return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
-    
+
     # ======== TRANSPORTE DE CABLES ========
     
     if "TRANSPORTE DE CABLE" in descripcion_upper:
