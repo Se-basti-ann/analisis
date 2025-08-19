@@ -3509,7 +3509,7 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
                 if "BRAZO" in material_name and nodo in nodos_qty:
-                    # Verificar si es un brazo pequeño (1 1/2", 3/4", etc.)
+                    # CORRECCIÓN: Mejorar la detección de brazos pequeños
                     es_brazo_pequeno = (
                         "1 1/2" in material_name or 
                         "1.5" in material_name or 
@@ -3519,11 +3519,11 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                     )
 
                     if es_brazo_pequeno:
-                        # Extraer longitud con diferentes formatos
+                        # CORRECCIÓN: Mejorar extracción de longitud
                         longitud = 0
 
-                        # Patrón 1: X 1,5 MT, X 2 MT, etc.
-                        longitud_match = re.search(r'X\s*(\d+(?:,\d+)?)\s*MT', material_name)
+                        # Patrón mejorado: buscar números seguidos de MT, MTS, M
+                        longitud_match = re.search(r'(\d+(?:[,\.]\d+)?)\s*M(?:TS?)?', material_name)
                         if longitud_match:
                             longitud_str = longitud_match.group(1).replace(',', '.')
                             try:
@@ -3531,17 +3531,7 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                             except:
                                 longitud = 0
 
-                        # Patrón 2: 1,5 MT, 2 MT, etc. (sin X)
-                        if longitud == 0:
-                            longitud_match = re.search(r'(\d+(?:,\d+)?)\s*MT', material_name)
-                            if longitud_match:
-                                longitud_str = longitud_match.group(1).replace(',', '.')
-                                try:
-                                    longitud = float(longitud_str)
-                                except:
-                                    longitud = 0
-
-                        # Solo contar si la longitud es <= 3 metros o no se puede determinar (asumir pequeño)
+                        # CORRECCIÓN: Solo contar si la longitud es <= 3 metros O si es un brazo pequeño sin longitud específica
                         if longitud == 0 or longitud <= 3:
                             cantidad_total += nodos_qty[nodo]
                             materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
@@ -3560,27 +3550,14 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
                     )
 
                     if es_brazo_pequeno:
-                        # Extraer longitud con diferentes formatos
                         longitud = 0
-
-                        # Patrón 1: X 1,5 MT, X 2 MT, etc.
-                        longitud_match = re.search(r'X\s*(\d+(?:,\d+)?)\s*MT', material_name)
+                        longitud_match = re.search(r'(\d+(?:[,\.]\d+)?)\s*M(?:TS?)?', material_name)
                         if longitud_match:
                             longitud_str = longitud_match.group(1).replace(',', '.')
                             try:
                                 longitud = float(longitud_str)
                             except:
                                 longitud = 0
-
-                        # Patrón 2: 1,5 MT, 2 MT, etc. (sin X)
-                        if longitud == 0:
-                            longitud_match = re.search(r'(\d+(?:,\d+)?)\s*MT', material_name)
-                            if longitud_match:
-                                longitud_str = longitud_match.group(1).replace(',', '.')
-                                try:
-                                    longitud = float(longitud_str)
-                                except:
-                                    longitud = 0
 
                         if longitud == 0 or longitud <= 3:
                             cantidad_total += nodos_qty[nodo]
@@ -3589,137 +3566,129 @@ def calcular_cantidad_mano_obra(descripcion, materiales_instalados, materiales_r
         cantidad_mo = cantidad_total
         return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
 
-    # Transporte de brazos 2 1/2" hasta 6 mts
+    # ======== CORRECCIÓN: TRANSPORTE DE BRAZOS 2 1/2" HASTA 6 MTS ========
     if "TRANSPORTE DE BRAZOS 2 1/2\" HASTA 6 MTS" in descripcion_upper:
         cantidad_total = 0
-
+    
         # Buscar brazos instalados que coincidan con la descripción
         for material_key, nodos_qty in materiales_instalados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
                 if "BRAZO" in material_name and nodo in nodos_qty:
-                    # Extraer longitud con diferentes formatos
+                    # CORRECCIÓN: Mejorar extracción de longitud
                     longitud = 0
-
-                    # Patrón 1: X 3 MT, X 4 MT, etc.
-                    longitud_match = re.search(r'X\s*(\d+(?:,\d+)?)\s*MT', material_name)
+    
+                    # Patrón mejorado para extraer longitud
+                    longitud_match = re.search(r'(\d+(?:[,\.]\d+)?)\s*M(?:TS?)?', material_name)
                     if longitud_match:
                         longitud_str = longitud_match.group(1).replace(',', '.')
                         try:
                             longitud = float(longitud_str)
                         except:
                             longitud = 0
-
-                    # Patrón 2: 3 MT, 4 MT, etc. (sin X)
-                    if longitud == 0:
-                        longitud_match = re.search(r'(\d+(?:,\d+)?)\s*MT', material_name)
-                        if longitud_match:
-                            longitud_str = longitud_match.group(1).replace(',', '.')
-                            try:
-                                longitud = float(longitud_str)
-                            except:
-                                longitud = 0
-
-                    # Contar brazos de 3 metros o más (considerados grandes)
-                    if longitud > 3:
+    
+                    # CORRECCIÓN: Solo contar brazos que REALMENTE sean grandes (> 3 metros)
+                    # Y que tengan indicación de ser brazos de 2 1/2" o similares
+                    es_brazo_grande_tipo = (
+                        "2 1/2" in material_name or 
+                        "2.5" in material_name or
+                        "2,5" in material_name
+                    )
+    
+                    # CORRECCIÓN: Contar solo si es un brazo grande Y tiene longitud > 3 metros
+                    if longitud > 3 and (es_brazo_grande_tipo or longitud >= 4):
                         cantidad_total += nodos_qty[nodo]
-                        materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-                    # Si no se puede determinar longitud pero es 2 1/2", asumir que es grande
-                    elif longitud == 0 and ("2 1/2" in material_name or "2.5" in material_name):
-                        cantidad_total += nodos_qty[nodo]
-                        materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-
+                        materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]}) - {longitud}M")
+                    # Si no se puede determinar longitud pero es explícitamente 2 1/2", verificar patrones de longitud
+                    elif longitud == 0 and es_brazo_grande_tipo:
+                        # Solo contar si hay indicación de que es un brazo largo
+                        if any(pattern in material_name for pattern in ["4", "5", "6"]):
+                            cantidad_total += nodos_qty[nodo]
+                            materiales_instalados_relacionados.append(f"{material_name} ({nodos_qty[nodo]}) - GRANDE")
+    
         # Buscar brazos retirados
         for material_key, nodos_qty in materiales_retirados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
                 if "BRAZO" in material_name and nodo in nodos_qty:
-                    # Extraer longitud con diferentes formatos
                     longitud = 0
-
-                    # Patrón 1: X 3 MT, X 4 MT, etc.
-                    longitud_match = re.search(r'X\s*(\d+(?:,\d+)?)\s*MT', material_name)
+                    longitud_match = re.search(r'(\d+(?:[,\.]\d+)?)\s*M(?:TS?)?', material_name)
                     if longitud_match:
                         longitud_str = longitud_match.group(1).replace(',', '.')
                         try:
                             longitud = float(longitud_str)
                         except:
                             longitud = 0
-
-                    # Patrón 2: 3 MT, 4 MT, etc. (sin X)
-                    if longitud == 0:
-                        longitud_match = re.search(r'(\d+(?:,\d+)?)\s*MT', material_name)
-                        if longitud_match:
-                            longitud_str = longitud_match.group(1).replace(',', '.')
-                            try:
-                                longitud = float(longitud_str)
-                            except:
-                                longitud = 0
-
-                    if longitud > 3:
+    
+                    es_brazo_grande_tipo = (
+                        "2 1/2" in material_name or 
+                        "2.5" in material_name or
+                        "2,5" in material_name
+                    )
+    
+                    if longitud > 3 and (es_brazo_grande_tipo or longitud >= 4):
                         cantidad_total += nodos_qty[nodo]
-                        materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-                    elif longitud == 0 and ("2 1/2" in material_name or "2.5" in material_name):
-                        cantidad_total += nodos_qty[nodo]
-                        materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]})")
-
+                        materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]}) - {longitud}M")
+                    elif longitud == 0 and es_brazo_grande_tipo:
+                        if any(pattern in material_name for pattern in ["4", "5", "6"]):
+                            cantidad_total += nodos_qty[nodo]
+                            materiales_retirados_relacionados.append(f"{material_name} ({nodos_qty[nodo]}) - GRANDE")
+    
         cantidad_mo = cantidad_total
         return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
-
     # ======== TRANSPORTE DE CABLES ========
     
     if "TRANSPORTE DE CABLE" in descripcion_upper:
         cantidad_total = 0
-    
+
         # Buscar cables instalados (aplicando las mismas condiciones que en INSTALACION CABLE)
         for material_key, nodos_qty in materiales_instalados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
-    
-                # Verificar si es uno de los cables específicos mencionados (misma lógica que instalación)
+
+                # CORRECCIÓN: Usar exactamente la misma lógica que en instalación de cable
                 es_cable_tpx = "CABLE TPX 2X4 AWG XLPE + 48.69 AAAC" in material_name
                 es_cable_al_tpx = "CABLE AL TPX 2X2+1X2 AWG" in material_name
                 es_cable_al4 = "CABLE AL #4" in material_name
                 es_cable_trenzado_2x4 = "CABLE TRENZADO 2X4" in material_name
-                # AGREGAR: Detección para CABLE DE CU THHN NRO. 6
                 es_cable_cu_thhn_6 = "CABLE DE CU THHN NRO. 6" in material_name or "CABLE CU THHN NRO. 6" in material_name or "CABLE DE AL THHN NRO. 6 (MTS)" in material_name
-    
+
                 if (es_cable_tpx or es_cable_al_tpx or es_cable_al4 or es_cable_trenzado_2x4 or es_cable_cu_thhn_6) and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
                     if qty > 0:  # Solo contar si la cantidad es mayor a 0
-                        # Multiplicar por 3 la cantidad para cables TPX y AL TPX (misma lógica que instalación)
+                        # CORRECCIÓN: Multiplicar por 3 SOLO para cables TPX y AL TPX
                         if es_cable_tpx or es_cable_al_tpx:
                             cantidad_total += qty * 3
                             materiales_instalados_relacionados.append(f"{material_name} ({qty} x 3 = {qty*3})")
                         else:
                             cantidad_total += qty
                             materiales_instalados_relacionados.append(f"{material_name} ({qty})")
-    
+
         # Buscar cables retirados (aplicando las mismas condiciones)
         for material_key, nodos_qty in materiales_retirados.items():
             if "|" in material_key:
                 material_name = material_key.split("|")[1].upper()
-    
-                # Verificar si es uno de los cables específicos mencionados
+
                 es_cable_tpx = "CABLE TPX 2X4 AWG XLPE + 48.69 AAAC" in material_name
                 es_cable_al_tpx = "CABLE AL TPX 2X2+1X2 AWG" in material_name
                 es_cable_al4 = "CABLE AL #4" in material_name
                 es_cable_trenzado_2x4 = "CABLE TRENZADO 2X4" in material_name
                 es_cable_cu_thhn_6 = "CABLE DE CU THHN NRO. 6" in material_name or "CABLE CU THHN NRO. 6" in material_name or "CABLE DE AL THHN NRO. 6 (MTS)" in material_name
-    
+
                 if (es_cable_tpx or es_cable_al_tpx or es_cable_al4 or es_cable_trenzado_2x4 or es_cable_cu_thhn_6) and nodo in nodos_qty:
                     qty = nodos_qty[nodo]
                     if qty > 0:
-                        # Multiplicar por 3 la cantidad para cables TPX y AL TPX
+                        # CORRECCIÓN: Multiplicar por 3 SOLO para cables TPX y AL TPX
                         if es_cable_tpx or es_cable_al_tpx:
                             cantidad_total += qty * 3
                             materiales_retirados_relacionados.append(f"{material_name} ({qty} x 3 = {qty*3})")
                         else:
                             cantidad_total += qty
                             materiales_retirados_relacionados.append(f"{material_name} ({qty})")
-    
+
         cantidad_mo = cantidad_total
         return cantidad_mo, materiales_instalados_relacionados, materiales_retirados_relacionados
+
     # ======== TRANSPORTE DE POSTES ========
     
     # Transporte de postes metálicos (incluye postes de fibra) de 4 a 12 metros
